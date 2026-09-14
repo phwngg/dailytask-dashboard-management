@@ -109,7 +109,7 @@ jobs:
             fi
             sleep 4
           done
-          { printf 'services:\n'; printf '  app:\n'; printf '    image: %s:%s\n' "$IMAGE" "$IMAGE_TAG"; } > "$RUNNER_TEMP/compose.ci.yaml"
+          { printf 'services:\n'; printf '  app:\n'; printf '    image: %s:%s\n' "$IMAGE" "$IMAGE_TAG"; printf '    pull_policy: always\n'; } > "$RUNNER_TEMP/compose.ci.yaml"
           scp "${scp_args[@]}" "$RUNNER_TEMP/compose.ci.yaml" "$target:$DEPLOY_PATH/docker-compose.ci.yaml"
 
           printf '%s\n' "$GHCR_TOKEN" | ssh "${ssh_args[@]}" "$target" \
