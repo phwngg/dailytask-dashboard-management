@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   test:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +34,6 @@ jobs:
 
   deploy:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: test
     runs-on: ubuntu-latest
     environment: Netbird-Server
     permissions:
@@ -55,6 +55,19 @@ jobs:
       DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
     steps:
       - uses: actions/checkout@v4
+      - name: Join NetBird
+        shell: bash
+        env:
+          NETBIRD_SETUP_KEY: ${{ secrets.NETBIRD_SETUP_KEY }}
+          NETBIRD_MANAGEMENT_URL: ${{ secrets.NETBIRD_MANAGEMENT_URL }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://pkgs.netbird.io/install.sh | sudo sh
+          args=(up --setup-key "$NETBIRD_SETUP_KEY" --hostname "dailytask-ci-$GITHUB_RUN_ID")
+          if [[ -n "${NETBIRD_MANAGEMENT_URL:-}" ]]; then
+            args+=(--management-url "$NETBIRD_MANAGEMENT_URL")
+          fi
+          sudo netbird "${args[@]}"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -71,19 +84,6 @@ jobs:
             ghcr.io/phwngg/dailytask-dashboard-management:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Join NetBird
-        shell: bash
-        env:
-          NETBIRD_SETUP_KEY: ${{ secrets.NETBIRD_SETUP_KEY }}
-          NETBIRD_MANAGEMENT_URL: ${{ secrets.NETBIRD_MANAGEMENT_URL }}
-        run: |
-          set -euo pipefail
-          curl -fsSL https://pkgs.netbird.io/install.sh | sudo sh
-          args=(up --setup-key "$NETBIRD_SETUP_KEY" --hostname "dailytask-ci-$GITHUB_RUN_ID")
-          if [[ -n "${NETBIRD_MANAGEMENT_URL:-}" ]]; then
-            args+=(--management-url "$NETBIRD_MANAGEMENT_URL")
-          fi
-          sudo netbird "${args[@]}"
       - name: Deploy over NetBird SSH
         shell: bash
         run: |
@@ -98,6 +98,17 @@ jobs:
           ssh_args=(-i "$RUNNER_TEMP/deploy_key" -p "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
           scp_args=(-i "$RUNNER_TEMP/deploy_key" -P "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
           target="$DEPLOY_USER@$DEPLOY_HOST"
+          for attempt in {1..15}; do
+            if ssh "${ssh_args[@]}" "$target" true 2>"$RUNNER_TEMP/ssh-probe.log"; then
+              echo "SSH endpoint is ready."
+              break
+            fi
+            if grep -Eqi "Permission denied|Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED" "$RUNNER_TEMP/ssh-probe.log" || (( attempt == 15 )); then
+              cat "$RUNNER_TEMP/ssh-probe.log" >&2
+              exit 1
+            fi
+            sleep 4
+          done
           { printf 'services:\n'; printf '  app:\n'; printf '    image: %s:%s\n' "$IMAGE" "$IMAGE_TAG"; } > "$RUNNER_TEMP/compose.ci.yaml"
           scp "${scp_args[@]}" "$RUNNER_TEMP/compose.ci.yaml" "$target:$DEPLOY_PATH/docker-compose.ci.yaml"
 

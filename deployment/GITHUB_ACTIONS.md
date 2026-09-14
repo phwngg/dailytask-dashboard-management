@@ -1,6 +1,6 @@
 # GitHub Actions deploy setup
 
-Pull requests run Go tests and build the frontend. A passing push to main builds a Docker image tagged with the commit SHA, joins NetBird as a temporary CI peer, then deploys over SSH.
+Pull requests run Go tests and build the frontend. Pushes to main go straight to building a Docker image tagged with the commit SHA, joining NetBird as a temporary CI peer, and deploying over SSH; they do not wait for the test job.
 
 Before the first push to main:
 
