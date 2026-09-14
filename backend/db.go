@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS content_plan (
   message TEXT NOT NULL DEFAULT '', assignee TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS plan_month_channel ON content_plan(month,channel);
+CREATE INDEX IF NOT EXISTS plan_post_id ON content_plan(post_date DESC,id DESC);
 CREATE TABLE IF NOT EXISTS schedules (
   id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, date TEXT NOT NULL, time TEXT NOT NULL,
   location TEXT NOT NULL DEFAULT '', lead TEXT NOT NULL DEFAULT '', attendees TEXT NOT NULL DEFAULT '[]',
@@ -170,8 +171,8 @@ func seed(db *sql.DB, email, password string) error {
 		return err
 	}
 	email = strings.ToLower(strings.TrimSpace(email))
-	if email == "" || len(password) < 12 {
-		return fmt.Errorf("database is empty: set INITIAL_ADMIN_EMAIL and a 12+ character INITIAL_ADMIN_PASSWORD")
+	if email == "" || len(password) == 0 || len(password) > 72 {
+		return fmt.Errorf("database is empty: set INITIAL_ADMIN_EMAIL and an INITIAL_ADMIN_PASSWORD of 1–72 bytes")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {

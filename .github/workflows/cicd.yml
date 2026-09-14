@@ -1,0 +1,105 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go test ./...
+        working-directory: backend
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    environment: Netbird-Server
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    env:
+      IMAGE: ghcr.io/phwngg/dailytask-dashboard-management
+      DEPLOY_HOST: 100.82.195.220
+      DEPLOY_PORT: 2222
+      DEPLOY_USER: neurosus
+      DEPLOY_PATH: /home/neurosus/hailt-outsource-project/phwng-dashboard
+      IMAGE_TAG: ${{ github.sha }}
+      GHCR_USER: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/phwngg/dailytask-dashboard-management:${{ github.sha }}
+            ghcr.io/phwngg/dailytask-dashboard-management:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Join NetBird
+        shell: bash
+        env:
+          NETBIRD_SETUP_KEY: ${{ secrets.NETBIRD_SETUP_KEY }}
+          NETBIRD_MANAGEMENT_URL: ${{ secrets.NETBIRD_MANAGEMENT_URL }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://pkgs.netbird.io/install.sh | sudo sh
+          args=(up --setup-key "$NETBIRD_SETUP_KEY" --hostname "dailytask-ci-$GITHUB_RUN_ID")
+          if [[ -n "${NETBIRD_MANAGEMENT_URL:-}" ]]; then
+            args+=(--management-url "$NETBIRD_MANAGEMENT_URL")
+          fi
+          sudo netbird "${args[@]}"
+      - name: Deploy over NetBird SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/deploy_key"
+          chmod 600 "$RUNNER_TEMP/deploy_key"
+          ssh-keygen -y -f "$RUNNER_TEMP/deploy_key" >/dev/null
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+          ssh_args=(-i "$RUNNER_TEMP/deploy_key" -p "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          scp_args=(-i "$RUNNER_TEMP/deploy_key" -P "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          target="$DEPLOY_USER@$DEPLOY_HOST"
+          { printf 'services:\n'; printf '  app:\n'; printf '    image: %s:%s\n' "$IMAGE" "$IMAGE_TAG"; } > "$RUNNER_TEMP/compose.ci.yaml"
+          scp "${scp_args[@]}" "$RUNNER_TEMP/compose.ci.yaml" "$target:$DEPLOY_PATH/docker-compose.ci.yaml"
+
+          printf '%s\n' "$GHCR_TOKEN" | ssh "${ssh_args[@]}" "$target" \
+            "umask 077; docker_config=\$(mktemp -d); export DOCKER_CONFIG=\$docker_config; trap 'rm -rf \"\$docker_config\"' EXIT; docker login ghcr.io --username '$GHCR_USER' --password-stdin && cd '$DEPLOY_PATH' && docker compose -f docker-compose.yml -f docker-compose.ci.yaml pull app && docker compose -f docker-compose.yml -f docker-compose.ci.yaml up -d --wait --wait-timeout 90 app && docker compose -f docker-compose.yml -f docker-compose.ci.yaml ps app"

@@ -25,6 +25,7 @@ func main() {
 	mux.HandleFunc("POST /api/login", app.login)
 	mux.HandleFunc("POST /api/logout", app.protected(app.logout))
 	mux.HandleFunc("GET /api/bootstrap", app.protected(app.bootstrap))
+	mux.HandleFunc("GET /api/plans", app.protected(app.listPlans))
 	mux.HandleFunc("POST /api/tasks", app.protected(app.createTask))
 	mux.HandleFunc("PATCH /api/tasks/{id}", app.protected(app.updateTask))
 	mux.HandleFunc("POST /api/plans", app.protected(app.createPlan))

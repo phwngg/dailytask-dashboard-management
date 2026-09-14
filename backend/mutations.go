@@ -316,8 +316,8 @@ func (a *api) createUser(w http.ResponseWriter, r *http.Request, me user) {
 		Password string `json:"password"`
 		Position string `json:"position"`
 	}
-	if decode(r, &p) != nil || !strings.Contains(p.Email, "@") || strings.TrimSpace(p.Name) == "" || len(p.Password) < 12 || len(p.Password) > 72 {
-		writeError(w, http.StatusBadRequest, "Kiểm tra email, tên và mật khẩu (12–72 byte)")
+	if decode(r, &p) != nil || !strings.Contains(p.Email, "@") || strings.TrimSpace(p.Name) == "" || len(p.Password) == 0 || len(p.Password) > 72 {
+		writeError(w, http.StatusBadRequest, "Kiểm tra email, tên và mật khẩu (1–72 byte)")
 		return
 	}
 	p.Email = strings.ToLower(strings.TrimSpace(p.Email))

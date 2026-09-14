@@ -1,0 +1,18 @@
+services:
+  app:
+    image: ghcr.io/phwngg/dailytask-dashboard-management:${IMAGE_TAG:-latest}
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+    ports:
+      - "${HTTP_PORT:-17443}:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true

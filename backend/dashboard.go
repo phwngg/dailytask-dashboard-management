@@ -36,8 +36,13 @@ func (a *api) bootstrap(w http.ResponseWriter, r *http.Request, me user) {
 		fail(w, err)
 		return
 	}
-	plans, err := a.plans(ctx)
+	plans, err := a.planPreview(ctx)
 	if err != nil {
+		fail(w, err)
+		return
+	}
+	var pendingPlanCount int
+	if err := a.db.QueryRowContext(ctx, "SELECT count(*) FROM content_plan WHERE status<>?", "Đã đăng").Scan(&pendingPlanCount); err != nil {
 		fail(w, err)
 		return
 	}
@@ -79,7 +84,7 @@ func (a *api) bootstrap(w http.ResponseWriter, r *http.Request, me user) {
 	mePub := me
 	mePub.Caps = me.Caps
 	writeJSON(w, http.StatusOK, map[string]any{
-		"me": mePub, "users": users, "tasks": tasks, "contentPlan": plans,
+		"me": mePub, "users": users, "tasks": tasks, "contentPlan": plans, "pendingPlanCount": pendingPlanCount,
 		"shoots": shoots, "lives": lives, "meetings": meetings, "channels": channels,
 		"shifts": shifts, "shiftsWeek": week, "payroll": payroll,
 		"payrollMonth": month, "currentMonth": currentMonth,
@@ -128,8 +133,8 @@ func (a *api) tasks(ctx context.Context, me user) ([]task, error) {
 	return out, rows.Err()
 }
 
-func (a *api) plans(ctx context.Context) ([]plan, error) {
-	rows, err := a.db.QueryContext(ctx, "SELECT id,channel,month,pillar,content_key,demo_date,post_date,status,message,assignee FROM content_plan ORDER BY post_date DESC LIMIT 5000")
+func (a *api) planPreview(ctx context.Context) ([]plan, error) {
+	rows, err := a.db.QueryContext(ctx, "SELECT id,channel,month,pillar,content_key,demo_date,post_date,status,message,assignee FROM content_plan WHERE status<>'Đã đăng' ORDER BY post_date DESC,id DESC LIMIT 3")
 	if err != nil {
 		return nil, err
 	}

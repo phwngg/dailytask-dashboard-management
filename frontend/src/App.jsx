@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const nav = [
   ['overview', 'Tổng quan', '◫'],
@@ -11,7 +11,7 @@ const nav = [
   ['admin', 'Quản trị', '⚙'],
 ]
 
-const demo = {
+const demo = import.meta.env.DEV ? {
   me: { email: 'admin@example.com', name: 'Minh Anh', initials: 'MA', role: 'admin', color: '#7657e8', isAdmin: true, isLeader: true, caps: ['plan.view','plan.edit','plan.manage','checklist.viewAll','shifts.viewAll','shifts.manage','payroll.viewAll','users.manage','channel.view'] },
   users: [
     { email: 'admin@example.com', name: 'Minh Anh', initials: 'MA', role: 'admin', color: '#7657e8' },
@@ -43,9 +43,13 @@ const demo = {
     {email:'an@example.com',base:9000000,fees:1250000,bonus:500000,penalty:0,total:10750000,kpi_ok:true,kpi_rate:92},
     {email:'bao@example.com',base:9500000,fees:980000,bonus:0,penalty:300000,total:10180000,kpi_ok:false,kpi_rate:76},
   ],
-}
+} : null
 
-const demoLogin = { ...demo }
+const routePaths = { overview:'/overview', plan:'/content-plan', tasks:'/tasks', shifts:'/shifts', calendar:'/calendar', payroll:'/payroll', channels:'/channels', admin:'/admin' }
+const routePages = Object.fromEntries(Object.entries(routePaths).map(([page,path]) => [path,page]))
+const initialPage = () => routePages[window.location.pathname] || 'overview'
+
+const demoLogin = demo ? { ...demo } : null
 
 async function request(path, options = {}) {
   const response = await fetch('/api' + path, {
@@ -78,15 +82,24 @@ const today = new Intl.DateTimeFormat('vi-VN', { weekday:'long', day:'numeric', 
 
 function App() {
   const [data, setData] = useState(null)
-  const [page, setPage] = useState('overview')
+  const [page, setPage] = useState(initialPage)
+  const [planRevision, setPlanRevision] = useState(0)
+  const navigate = (key, replace = false) => {
+    const path = routePaths[key] || routePaths.overview
+    if (window.location.pathname !== path) {
+      window.history[replace ? 'replaceState' : 'pushState']({}, '', path)
+      window.scrollTo(0,0)
+    }
+    setPage(key in routePaths ? key : 'overview')
+  }
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [demoMode, setDemoMode] = useState(import.meta.env.VITE_DEMO === 'true')
+  const [demoMode, setDemoMode] = useState(!import.meta.env.PROD && import.meta.env.VITE_DEMO === 'true')
   const [modal, setModal] = useState('')
   const [query, setQuery] = useState('')
 
   const load = async () => {
-    if (import.meta.env.VITE_DEMO === 'true') {
+    if (!import.meta.env.PROD && import.meta.env.VITE_DEMO === 'true') {
       setData(demo)
       setDemoMode(true)
       setLoading(false)
@@ -105,6 +118,21 @@ function App() {
   }
 
   useEffect(() => { load() }, [])
+
+  useEffect(() => {
+    if (data && page === 'admin' && !data.me?.caps?.includes('users.manage')) navigate('overview', true)
+  }, [data,page])
+
+  useEffect(() => {
+    const syncRoute = () => {
+      const next = routePages[window.location.pathname]
+      if (!next) { window.history.replaceState({}, '', routePaths.overview); setPage('overview') }
+      else setPage(next)
+    }
+    syncRoute()
+    window.addEventListener('popstate', syncRoute)
+    return () => window.removeEventListener('popstate', syncRoute)
+  }, [])
 
   const doLogin = async (email, password) => {
     setError('')
@@ -126,7 +154,7 @@ function App() {
   const logout = async () => {
     if (!demoMode) { try { await request('/logout', { method:'POST', body:'{}' }) } catch {} }
     setData(null)
-    setPage('overview')
+    navigate('overview', true)
   }
 
   const updateTask = async (id, status) => {
@@ -156,11 +184,13 @@ function App() {
   const savePlan = async form => {
     if (demoMode) {
       setData(d => ({ ...d, contentPlan:[{ id:crypto.randomUUID(), status:'Chưa thực hiện', ...form }, ...d.contentPlan] }))
+      setPlanRevision(v => v + 1)
       setModal('')
       return
     }
     try {
       await request('/plans', { method:'POST', body:JSON.stringify(form) })
+      setPlanRevision(v => v + 1)
       setModal('')
       await load()
     } catch (e) { setError(e.message) }
@@ -175,13 +205,13 @@ function App() {
   return (
     <div className="app-shell min-h-screen bg-slate-50 text-slate-900">
       <aside className="sidebar">
-        <div className="brand"><span className="brand-mark">d</span><span>daily<span className="brand-light">task</span></span><span className="brand-badge">TEAM</span></div>
+        <button className="brand" aria-label="DailyTask — về Tổng quan" onClick={() => navigate('overview')}><span className="brand-mark">d</span><span>daily<span className="brand-light">task</span></span></button>
         <div className="workspace-label">WORKSPACE</div>
-        <button className="workspace-switch"><span className="workspace-dot">D</span><span><b>Daily Studio</b><small>Không gian làm việc</small></span><span className="workspace-caret">⌄</span></button>
+        <button className="workspace-switch" aria-label="Daily Studio — về Tổng quan" onClick={() => navigate('overview')}><span className="workspace-dot">D</span><span><b>Daily Studio</b><small>Không gian làm việc</small></span><span className="workspace-caret">⌄</span></button>
         <div className="nav-label">MENU CHÍNH</div>
         <nav className="side-nav">
           {visibleNav.map(([key,label,glyph]) => (
-            <button key={key} className={'nav-item ' + (page === key ? 'active' : '')} onClick={() => setPage(key)}>
+            <button key={key} className={'nav-item ' + (page === key ? 'active' : '')} aria-current={page === key ? 'page' : undefined} onClick={() => navigate(key)}>
               <span className="nav-glyph">{glyph}</span><span>{label}</span>{key === 'tasks' && <span className="nav-count">{data.tasks?.filter(t => t.status !== 'done').length || 0}</span>}
             </button>
           ))}
@@ -194,18 +224,25 @@ function App() {
 
       <main className="main-area">
         <header className="topbar">
-          <div className="breadcrumb"><span>Daily Studio</span><Icon name="chevron"/><b>{current}</b></div>
+          <div className="breadcrumb"><button onClick={() => navigate('overview')}>Daily Studio</button><Icon name="chevron"/><b>{current}</b></div>
           <div className="top-actions">
             <label className="search-box"><Icon name="search"/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Tìm công việc, nội dung..." /><kbd>⌘ K</kbd></label>
             <button className="icon-button notification"><Icon name="bell"/><i/></button>
             <span className="today-chip"><Icon name="calendar"/>{today}</span>
-            <Avatar user={data.me}/>
+            <details className="account-menu">
+              <summary aria-label="Mở menu tài khoản"><Avatar user={data.me}/><span className="account-caret">⌄</span></summary>
+              <div className="account-popover">
+                <div className="account-identity"><Avatar user={data.me}/><span><b>{data.me?.name || 'Thành viên'}</b><small>{data.me?.email}</small></span></div>
+                <div className="account-role">{data.me?.role === 'admin' ? 'Quản trị viên' : 'Thành viên'}</div>
+                <button className="account-logout" onClick={logout}><Icon name="logout"/> Đăng xuất</button>
+              </div>
+            </details>
           </div>
         </header>
         {error && <button className="notice-bar" onClick={()=>setError('')}>{error}<span>×</span></button>}
         <div className="page-content">
-          {page === 'overview' && <Overview data={data} go={setPage} onStatus={updateTask} demo={demoMode}/>}
-          {page === 'plan' && <PlanPage data={data} onAdd={()=>setModal('plan')} query={query}/>}
+          {page === 'overview' && <Overview data={data} go={navigate} onStatus={updateTask} demo={demoMode}/>}
+          {page === 'plan' && <PlanPage data={data} onAdd={()=>setModal('plan')} query={query} onQueryChange={setQuery} demoMode={demoMode} refreshKey={planRevision}/>}
           {page === 'tasks' && <TaskPage data={data} onAdd={()=>setModal('task')} onStatus={updateTask} query={query}/>}
           {page === 'shifts' && <ShiftPage data={data}/> }
           {page === 'calendar' && <CalendarPage data={data}/>}
@@ -226,7 +263,7 @@ function Login({ onLogin, error, setDemo }) {
   return <div className="login-shell">
     <section className="login-visual">
       <div className="login-brand"><span className="brand-mark">d</span> daily<span className="brand-light">task</span></div>
-      <div className="login-copy"><span className="eyebrow light">TEAM WORKSPACE</span><h1>Đưa mọi kế hoạch<br/>về đúng quỹ đạo.</h1><p>Một không gian gọn gàng để đội ngũ cùng tập trung, phối hợp và hoàn thành công việc.</p><div className="login-art"><div className="art-card art-back"><span className="art-mini-dot"/> Kế hoạch tuần <b>84%</b><div className="art-progress"><i/></div></div><div className="art-card art-front"><span className="art-check">✓</span><span><b>Hoàn thành dự án</b><small>Hôm nay · 14:32</small></span><span className="art-spark">✦</span></div><div className="art-orb"/></div></div>
+      <div className="login-copy"><span className="eyebrow light">TEAM WORKSPACE</span><h1>Đưa mọi kế hoạch<br/>về đúng quỹ đạo.</h1><p>Một không gian gọn gàng để đội ngũ cùng tập trung, phối hợp và hoàn thành công việc.</p><div className="login-art"><div className="art-card art-back"><span className="art-mini-dot"/> Daily Studio <b>TEAM</b></div><div className="art-card art-front"><span className="art-check">✓</span><span><b>Công việc và kế hoạch</b><small>Theo dõi tiến độ mỗi ngày</small></span><span className="art-spark">✦</span></div><div className="art-orb"/></div></div>
       <div className="login-foot">© 2026 DailyTask <span>•</span> Làm việc cùng nhau, tốt hơn mỗi ngày.</div>
     </section>
     <section className="login-form-wrap"><div className="login-form">
@@ -238,7 +275,7 @@ function Login({ onLogin, error, setDemo }) {
         {error && <div className="form-error">{error}</div>}
         <button className="primary-button w-full" type="submit">Đăng nhập <Icon name="arrow"/></button>
       </form>
-      {import.meta.env.VITE_DEMO !== 'true' && <button className="demo-link" onClick={setDemo}>Xem giao diện demo</button>}
+      {!import.meta.env.PROD && import.meta.env.VITE_DEMO !== 'true' && <button className="demo-link" onClick={setDemo}>Xem giao diện demo</button>}
       <p className="login-terms">Bằng việc tiếp tục, bạn đồng ý với <a>Điều khoản sử dụng</a> và <a>Chính sách bảo mật</a>.</p>
     </div></section>
   </div>
@@ -257,7 +294,7 @@ function Overview({data,go,onStatus,demo}) {
     <div className="metric-grid">
       <Metric label="Công việc đang mở" value={open.length} delta={demo?"+12.8%":""} color="purple" icon="▤"/>
       <Metric label="Hoàn thành tuần này" value={done} delta={demo?"+8.4%":""} color="green" icon="✓"/>
-      <Metric label="Nội dung chờ duyệt" value={pending.length} delta={demo?"2 mới":""} color="orange" icon="◷"/>
+      <Metric label="Nội dung chờ duyệt" value={data.pendingPlanCount ?? pending.length} delta={demo?"2 mới":""} color="orange" icon="◷"/>
       <Metric label="Tiến độ KPI trung bình" value={demo?"86%":"—"} delta={demo?"+5.2%":""} color="blue" icon="◉"/>
     </div>
     <div className="content-grid overview-grid">
@@ -298,9 +335,135 @@ function TaskCard({task,users,onStatus}) {
   return <article className="task-card"><div className="task-card-top"><span className={'priority-tag '+(task.priority==='Cao'?'high':task.priority==='Thấp'?'low':'medium')}>{task.priority||'Vừa'} ưu tiên</span><button className="dots-button"><Icon name="more"/></button></div><h3>{task.title}</h3><p>{task.description||'Chưa có mô tả cho công việc này.'}</p><div className="task-tags"><span>▤ {task.kpi_key||'Công việc'}</span></div><div className="task-card-foot"><span className="due-label"><Icon name="calendar"/>{task.due||'Chưa đặt hạn'}</span><button className="avatar-button" title={'Cập nhật: '+next} onClick={()=>onStatus(task.id,next)}><Avatar user={user}/></button></div></article>
 }
 
-function PlanPage({data,onAdd,query}) {
-  const plans=(data.contentPlan||[]).filter(p=>(p.key+' '+p.pillar+' '+p.channel).toLowerCase().includes(query.toLowerCase()))
-  return <div><PageHeading eyebrow="LỊCH BIÊN TẬP" title="Kế hoạch nội dung" description="Lập kế hoạch, phân công và theo dõi lịch xuất bản." action={<button className="primary-button" onClick={onAdd}><Icon name="plus"/> Thêm nội dung</button>}/><div className="summary-strip"><span><b>{plans.length}</b> nội dung trong kế hoạch</span><span className="summary-sep"/><span><i className="small-dot green-dot"/> {plans.filter(p=>p.status==='Đã đăng').length} đã đăng</span><span><i className="small-dot orange-dot"/> {plans.filter(p=>p.status==='Đang thực hiện').length} đang làm</span><span className="grow"/><select className="select-small"><option>Tháng 9, 2026</option></select></div><section className="panel table-panel"><div className="table-toolbar"><div className="filter-tabs"><button className="selected">Tất cả</button><button>Đang làm</button><button>Đã đăng</button></div><button className="secondary-button">Kênh <span>⌄</span></button></div><div className="simple-table plan-table"><div className="table-head"><span>CONTENT PILLAR / KEY</span><span>KÊNH</span><span>DEMO</span><span>NGÀY ĐĂNG</span><span>PHỤ TRÁCH</span><span>TRẠNG THÁI</span></div>{plans.map(p=><div className="table-row" key={p.id}><span className="plan-title"><b>{p.pillar||'Nội dung'}</b><small>{p.key}</small></span><span><i className="table-avatar">{(p.channel||'D')[0]}</i>{p.channel}</span><span>{p.demo_date||'—'}</span><span>{p.post_date||'—'}</span><span>{data.users?.find(u=>u.email===p.assignee)?.name||p.assignee||'—'}</span><Status value={p.status}/></div>)}</div></section></div>
+function PlanPage({data,onAdd,query,onQueryChange,demoMode,refreshKey}) {
+  const [filters,setFilters] = useState({channel:'',from:'',to:'',assignee:'',status:''})
+  const [debouncedQuery,setDebouncedQuery] = useState(query)
+  const [items,setItems] = useState([])
+  const [channels,setChannels] = useState([...new Set((data.contentPlan||[]).map(p=>p.channel).filter(Boolean))])
+  const [statuses,setStatuses] = useState([...new Set((data.contentPlan||[]).map(p=>p.status).filter(Boolean))])
+  const [stats,setStats] = useState({total:0,published:0,in_progress:0,planned:0})
+  const [total,setTotal] = useState(0)
+  const [nextCursor,setNextCursor] = useState(null)
+  const [hasMore,setHasMore] = useState(false)
+  const [loading,setLoading] = useState(true)
+  const [loadingMore,setLoadingMore] = useState(false)
+  const [loadError,setLoadError] = useState('')
+  const sentinel = useRef(null)
+  const generation = useRef(0)
+  const requestLock = useRef(false)
+  const params = new URLSearchParams({limit:'40'})
+  if (debouncedQuery.trim()) params.set('q',debouncedQuery.trim())
+  for (const [key,value] of Object.entries(filters)) if (value) params.set(key,value)
+  const filterKey = params.toString()
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 250)
+    return () => clearTimeout(timer)
+  }, [query])
+
+  useEffect(() => {
+    const current = ++generation.current
+    requestLock.current = false
+    setLoading(true)
+    setLoadingMore(false)
+    setItems([])
+    setTotal(0)
+    setStats({total:0,published:0,in_progress:0,planned:0})
+    setHasMore(false)
+    setNextCursor(null)
+    setLoadError('')
+    const loadFirst = async () => {
+      try {
+        let result
+        if (demoMode) {
+          const q = (params.get('q')||'').toLowerCase()
+          const filtered = (data.contentPlan||[]).filter(p => {
+            const content = [p.key,p.pillar,p.message].join(' ').toLowerCase()
+            return (!q || content.includes(q)) && (!filters.channel || p.channel===filters.channel) && (!filters.from || p.post_date>=filters.from) && (!filters.to || p.post_date<=filters.to) && (!filters.assignee || p.assignee===filters.assignee) && (!filters.status || p.status===filters.status)
+          })
+          result = {items:filtered.slice(0,40),total:filtered.length,channels:[...new Set((data.contentPlan||[]).map(p=>p.channel).filter(Boolean))],statuses:[...new Set((data.contentPlan||[]).map(p=>p.status).filter(Boolean))],hasMore:false,stats:{total:filtered.length,published:filtered.filter(p=>p.status==='Đã đăng').length,in_progress:filtered.filter(p=>p.status==='Đang thực hiện').length,planned:filtered.filter(p=>p.status==='Chưa thực hiện').length,by_status:Object.fromEntries([...new Set(filtered.map(p=>p.status))].map(status=>[status,filtered.filter(p=>p.status===status).length]))}}
+        } else result = await request('/plans?'+filterKey)
+        if (current !== generation.current) return
+        setItems(result.items||[])
+        setTotal(result.total||0)
+        setStats(result.stats||{total:0,published:0,in_progress:0,planned:0,by_status:{}})
+        setChannels(result.channels||[])
+        setStatuses(result.statuses||[])
+        setHasMore(Boolean(result.hasMore))
+        setNextCursor(result.nextCursor||null)
+      } catch (e) {
+        if (current === generation.current) setLoadError(e.message)
+      } finally {
+        if (current === generation.current) setLoading(false)
+      }
+    }
+    loadFirst()
+    return () => { generation.current++ }
+  }, [filterKey,demoMode,refreshKey])
+
+  const loadMore = async () => {
+    if (!hasMore || loading || loadingMore || requestLock.current || !nextCursor) return
+    requestLock.current = true
+    const current = generation.current
+    setLoadingMore(true)
+    const pageParams = new URLSearchParams(filterKey)
+    pageParams.set('cursorDate',nextCursor.date)
+    pageParams.set('cursorID',nextCursor.id)
+    try {
+      const result = await request('/plans?'+pageParams.toString())
+      if (current === generation.current) {
+        setItems(rows => [...rows,...(result.items||[])])
+        setHasMore(Boolean(result.hasMore))
+        setNextCursor(result.nextCursor||null)
+      }
+    } catch (e) {
+      if (current === generation.current) setLoadError(e.message)
+    } finally {
+      if (current === generation.current) {
+        requestLock.current = false
+        setLoadingMore(false)
+      }
+    }
+  }
+
+  useEffect(() => {
+    const node = sentinel.current
+    if (!node || !hasMore || loading || loadingMore) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) loadMore()
+    },{rootMargin:'320px'})
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [hasMore,loading,loadingMore,filterKey,nextCursor])
+
+  const personName = email => data.users?.find(u=>u.email===email)?.name||email||'—'
+  return <div>
+    <PageHeading eyebrow="LỊCH BIÊN TẬP" title="Kế hoạch nội dung" description="Lập kế hoạch, phân công và theo dõi lịch xuất bản." action={<button className="primary-button" onClick={onAdd}><Icon name="plus"/> Thêm nội dung</button>}/>
+    <section className="plan-stats" aria-label="Thống kê theo bộ lọc">
+      <div><span>Tổng nội dung khớp lọc</span><b>{stats.total}</b></div>{Object.entries(stats.by_status||{}).map(([status,count])=><div key={status}><span>{status||'Chưa đặt trạng thái'}</span><b>{count}</b></div>)}
+    </section>
+    <section className="panel plan-filter-panel">
+      <div className="plan-filter-heading"><div><h2>Lọc nội dung</h2><span>{items.length} / {total} kết quả đang tải</span></div><button className="text-button" onClick={()=>{onQueryChange('');setFilters({channel:'',from:'',to:'',assignee:'',status:''})}}>Xóa bộ lọc</button></div>
+      <div className="plan-filter-grid">
+        <label className="plan-search-field">Nội dung<input type="search" value={query} onChange={e=>onQueryChange(e.target.value)} placeholder="Tìm chủ đề, key, mô tả..."/></label>
+        <label>Kênh<select value={filters.channel} onChange={e=>setFilters(f=>({...f,channel:e.target.value}))}><option value="">Tất cả kênh</option>{channels.map(x=><option key={x} value={x}>{x}</option>)}</select></label>
+        <label>Ngày đăng từ<input type="date" value={filters.from} onChange={e=>setFilters(f=>({...f,from:e.target.value}))}/></label>
+        <label>Đến ngày<input type="date" value={filters.to} onChange={e=>setFilters(f=>({...f,to:e.target.value}))}/></label>
+        <label>Phụ trách<select value={filters.assignee} onChange={e=>setFilters(f=>({...f,assignee:e.target.value}))}><option value="">Tất cả thành viên</option>{(data.users||[]).map(u=><option key={u.email} value={u.email}>{u.name}</option>)}</select></label>
+        <label>Trạng thái<select value={filters.status} onChange={e=>setFilters(f=>({...f,status:e.target.value}))}><option value="">Tất cả trạng thái</option>{statuses.map(x=><option key={x} value={x}>{x}</option>)}</select></label>
+      </div>
+    </section>
+    <section className="panel table-panel plan-results-panel"><div className="table-toolbar"><h2>Danh sách nội dung</h2><span>{items.length} / {total} nội dung</span></div>
+      <div className="simple-table plan-table"><div className="table-head"><span>CONTENT PILLAR / KEY</span><span>KÊNH</span><span>DEMO</span><span>NGÀY ĐĂNG</span><span>PHỤ TRÁCH</span><span>TRẠNG THÁI</span></div>
+        {items.map(p=><div className="table-row" key={p.id}><span className="plan-title"><b>{p.pillar||'Nội dung'}</b><small>{p.key}</small></span><span><i className="table-avatar">{(p.channel||'D')[0]}</i>{p.channel}</span><span>{p.demo_date||'—'}</span><span>{p.post_date||'—'}</span><span>{personName(p.assignee)}</span><Status value={p.status}/></div>)}
+        {!items.length && !loading && <div className="plan-empty">{loadError?'Không tải được nội dung.':'Không tìm thấy nội dung phù hợp.'}</div>}
+        {loading && !items.length && <div className="plan-empty">Đang tải nội dung…</div>}
+      </div>
+      {loadError && <div className="plan-load-error">{loadError}</div>}
+      {hasMore && <div ref={sentinel} className="plan-load-trigger" aria-live="polite">{loadingMore?'Đang tải thêm nội dung…':<button className="secondary-button" onClick={loadMore}>Tải thêm</button>}</div>}
+      {!hasMore && items.length>0 && <div className="plan-end-note">Đã hiển thị hết {total} nội dung phù hợp.</div>}
+    </section>
+  </div>
 }
 
 function ShiftPage({data}) {

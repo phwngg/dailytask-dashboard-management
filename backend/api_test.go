@@ -59,6 +59,21 @@ func TestLoginBootstrapAndLogout(t *testing.T) {
 	}
 }
 
+func TestShortInitialPasswordAccepted(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "app.db"), "admin", "admin123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var hash string
+	if err := db.QueryRow("SELECT password_hash FROM users WHERE username='admin'").Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte("admin123")); err != nil {
+		t.Fatalf("short initial password was not stored correctly: %v", err)
+	}
+}
+
 func TestRequireChecksLeaderCapabilities(t *testing.T) {
 	w := httptest.NewRecorder()
 	if require(w, user{IsLeader: true}, "users.manage") {

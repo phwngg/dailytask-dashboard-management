@@ -30,7 +30,7 @@ npm ci
 npm run dev
 ```
 
-Mở `http://localhost:5173`. Vite chuyển tiếp `/api` sang Go ở `localhost:8080`. SQLite mặc định được lưu tại `backend/data/dailytask.db`; lần đầu cần mật khẩu admin ít nhất 12 ký tự.
+Mở `http://localhost:5173`. Vite chuyển tiếp `/api` sang Go ở `localhost:8080`. SQLite mặc định được lưu tại `backend/data/dailytask.db`; mật khẩu admin không được để trống và tối đa 72 byte.
 
 ## Chạy Docker Compose
 
