@@ -1,0 +1,10 @@
+.git
+legacy
+**/node_modules
+**/dist
+**/*.db
+**/*.db-shm
+**/*.db-wal
+*.xlsx
+.env
+.env.*
