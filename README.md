@@ -62,3 +62,9 @@ Workbook cũ đã được nhập vào SQLite volume của môi trường đang 
 Tính lương và gộp KPI từ Inputs, task/lịch hoàn thành và ChannelStats chạy trong Go; Apps Script chỉ còn bản lưu trữ. Snapshot payroll tháng 2026-08 không khớp kết quả tính lại theo Policy/Inputs hiện có ở 7/9 người. Vì vậy nút tính lại yêu cầu xác nhận trước khi ghi đè. ChannelStats trong workbook trống; đồng bộ Pancake, Google Calendar và email chưa được chuyển. Trang Lịch quay & họp và cấu hình kênh hiển thị dữ liệu đã nhập.
 
 SQLite phù hợp với một backend instance và tải ghi thấp đến vừa; WAL cho phép nhiều reader cùng lúc nhưng vẫn chỉ có một writer. 100 CCU cần được kiểm tra theo tỷ lệ đọc/ghi và tải thực tế; không chạy nhiều backend replica cùng ghi một file SQLite. Nếu cần nhiều instance hoặc ghi đồng thời cao, chuyển DB sang PostgreSQL.
+
+## CI/CD
+
+Production UI: [https://phwng.site](https://phwng.site). Nginx on the VPS shares ports 80/443 by hostname and proxies to the app over NetBird; it does not claim another public port. See the [CI/CD and production routing guide](deployment/GITHUB_ACTIONS.md) before changing server ports, Compose settings, Nginx sites, or TLS renewal.
+
+GitHub Actions chạy kiểm tra Go và build frontend trên Pull Request vào `main`. Push lên `main` sẽ build image và tự deploy qua NetBird + SSH; để ưu tiên tốc độ, push trực tiếp **bỏ qua job test**. Workflow và cách cấu hình GitHub Environment/secrets, server, cùng xử lý lỗi được mô tả trong [deployment/GITHUB_ACTIONS.md](deployment/GITHUB_ACTIONS.md).

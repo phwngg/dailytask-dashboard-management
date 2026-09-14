@@ -1,12 +1,69 @@
-# GitHub Actions deploy setup
+# GitHub Actions CI/CD
 
-Pull requests run Go tests and build the frontend. Pushes to main go straight to building a Docker image tagged with the commit SHA, joining NetBird as a temporary CI peer, and deploying over SSH; they do not wait for the test job.
+Workflow: `.github/workflows/cicd.yml`. Production deploy runs from GitHub Actions and reaches the server through a temporary NetBird peer, then SSH. It does not require a runner on the server.
 
-Before the first push to main:
+## What runs
 
-1. In NetBird, create a dedicated setup key for CI. Set it to ephemeral, reusable, and assign it to a dedicated group. Add an access policy allowing that group to reach only 100.82.195.220:2222. For a self-hosted NetBird management server, also note its management URL.
-2. In the GitHub repository, open Settings → Environments → Netbird-Server → Add secret and add NETBIRD_SETUP_KEY, DEPLOY_SSH_PRIVATE_KEY, and DEPLOY_KNOWN_HOSTS. If NetBird is self-hosted, add NETBIRD_MANAGEMENT_URL too. Set DEPLOY_KNOWN_HOSTS to the independently verified host-key line for [100.82.195.220]:2222.
-3. Generate a dedicated Ed25519 SSH key without a passphrase for deployment and add its public key to neurosus authorized_keys. Ensure that account can run Docker Compose without an interactive sudo prompt. The workflow does not store or send the server sudo password.
-4. Enable GitHub Actions for the repository. A push to main runs tests first, then deploys only after they pass.
+- A Pull Request targeting `main` runs `go test ./...` in `backend/` and `npm ci` plus `npm run build` in `frontend/`. Pull Requests never deploy.
+- A push to `main` builds and pushes a Docker image tagged with the full commit SHA and `latest`, then deploys the SHA-tagged image. To keep feedback fast, the test job is skipped on pushes and does not gate deployment. A failing or skipped PR check therefore does not prevent a direct push to `main` from deploying.
+- `workflow_dispatch` can deploy only when run against `main`.
 
-The workflow keeps the server docker-compose.yml, .env, and data/ directory unchanged. It uploads a small docker-compose.ci.yaml image override and combines it with the existing Compose file when pulling and restarting only the app service. Existing ports, volumes, container settings, and other services remain defined by the server Compose file. The app image is pinned to the commit SHA.
+For the normal team path, open a Pull Request, wait for its checks, then merge it. If the team must prevent untested direct pushes, enable a `main` branch ruleset that requires Pull Requests and the CI test checks; the workflow itself intentionally keeps direct push deployment fast.
+
+## One-time setup
+
+Create a GitHub Environment named exactly `Netbird-Server` under **Settings → Environments**. Add these as **Environment secrets** (not variables):
+
+| Secret | Value / purpose |
+| --- | --- |
+| `NETBIRD_SETUP_KEY` | Reusable, ephemeral setup key for a temporary CI peer. Put it in the dedicated CI group and allow only the server SSH route in the NetBird access policy. Keep the key private and rotate it if exposed. |
+| `NETBIRD_MANAGEMENT_URL` | Optional. Set this only when using a self-hosted NetBird management server; omit it for NetBird Cloud. |
+| `DEPLOY_SSH_PRIVATE_KEY` | Private half of a dedicated deploy SSH key. The matching public key must be in the deploy account's `~/.ssh/authorized_keys` on the server. Do not commit or share the private half. |
+| `DEPLOY_KNOWN_HOSTS` | Independently verified SSH host-key line for `[100.82.195.220]:2222`. Do not trust an unverified `ssh-keyscan` result as proof of server identity. |
+
+The workflow uses the repository's `GITHUB_TOKEN` to publish to GHCR and log the server into GHCR; the deploy job has `packages: write`. Ensure GitHub Actions is enabled and the package permissions allow this repository's workflow to publish and pull the image.
+
+On the server, keep the production Compose file, `.env`, and persistent `data/` under `/home/neurosus/hailt-outsource-project/phwng-dashboard/`. The SSH account (`neurosus`) must be able to run Docker Compose without an interactive sudo prompt. The Compose project needs an `app` service with a working healthcheck because deploy waits for it to become healthy. Do not store the database or production `.env` in GitHub.
+
+## Production hostname and reverse proxy
+
+Production URL: `https://phwng.site`. Its DNS A record points to VPS `103.75.183.34`. Nginx on that VPS uses a dedicated virtual host at `/etc/nginx/sites-available/phwng.site` (enabled from `/etc/nginx/sites-enabled/phwng.site`).
+
+That virtual host shares Nginx's existing public listeners on ports `80` and `443`, routing by `server_name phwng.site`; it does not reserve another VPS port. Port `80` serves the Let's Encrypt HTTP-01 challenge and redirects normal requests to HTTPS. Port `443` terminates TLS and proxies to `http://100.82.195.220:17443` over NetBird. On the app server, host port `17443` maps to the container's `8080`. The VPS must remain connected as a NetBird peer, with a policy permitting the proxy peer to reach the app peer on TCP `17443`.
+
+Keep `COOKIE_SECURE=true` in the production `.env` because the public site uses HTTPS. The CI workflow deploys only the `app` container on the app server; it does not change the VPS Nginx configuration.
+
+### Preserve the shared VPS configuration
+
+- Keep the existing Nginx listeners and other virtual hosts unchanged. Add another hostname-based server block when adding a site; do not allocate a new listener port for `phwng.site`.
+- Keep the app server's host port at `17443` unless you update both its Compose configuration and this Nginx upstream together. Port `17443` is the upstream destination, not a port Nginx listens on at the VPS.
+- Keep the ACME challenge location, `/var/www/letsencrypt` webroot, Let's Encrypt certificate files, and the active `certbot.timer` so certificate renewal continues.
+- Before changing Nginx, inspect current listeners with `ss -lntp` and loaded configuration with `nginx -T`. Validate any edit with `nginx -t`, then use `systemctl reload nginx` so existing services are not stopped.
+
+Useful checks from the VPS:
+
+```sh
+curl -fsS http://100.82.195.220:17443/api/health
+nginx -t
+curl -I http://phwng.site
+curl -fsS https://phwng.site/api/health
+```
+
+Expected results: upstream and HTTPS health checks return `{"ok":true}`; HTTP returns a redirect to HTTPS. If the upstream check fails, check the VPS NetBird connection and its access policy before changing Nginx ports.
+
+## Deploy behavior
+
+The workflow builds `deployment/Dockerfile`, pushes the image to `ghcr.io/phwngg/dailytask-dashboard-management`, joins NetBird, and waits for SSH to become reachable. It uploads a generated `docker-compose.ci.yaml` override with the current commit's image and `pull_policy: always`, then runs Compose using both the server's `docker-compose.yml` and that override. This explicitly pulls the new image even if the server Compose sets `pull_policy: never`.
+
+Only the `app` service is pulled and restarted. Server ports, `env_file`, volumes, database, and other Compose settings remain defined by the server file. The deploy waits up to 90 seconds for the app healthcheck; the GitHub run is successful only after Compose reports the service healthy. The override file remains in the server folder and is replaced on the next deployment.
+
+Typical end-to-end time is around a few minutes and can approach five minutes depending on GitHub runner queueing, image build/cache, and NetBird/SSH connection time. Check the run under **Actions**; wait for the deploy job to show **Success** before using the updated app. A skipped test job on a `main` push is expected.
+
+## Troubleshooting
+
+- **Run is queued:** GitHub has not assigned a runner yet; this is not an SSH failure.
+- **NetBird join or SSH probe fails:** check that the setup key is active, the CI peer is in the allowed group, the policy permits TCP `2222` to `100.82.195.220`, and `neurosus` accepts the matching public key.
+- **Host key verification fails:** refresh `DEPLOY_KNOWN_HOSTS` only after verifying the server's host-key fingerprint through a trusted channel.
+- **GHCR login/pull fails:** check the package access settings and that the workflow token can read/write the package.
+- **`No such image` during Compose recreate:** confirm the CI override includes `pull_policy: always` and inspect the preceding `docker compose ... pull app` output. The production Compose file may keep its own `pull_policy`; the CI override takes precedence.
+- **Health wait times out:** inspect the app container logs and `/api/health` on the server. Compose will fail the run rather than reporting an unverified deployment as successful.
