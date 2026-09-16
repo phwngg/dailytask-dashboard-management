@@ -171,6 +171,17 @@ func TestPancakeConnectReusesPageTokensByID(t *testing.T) {
 			t.Fatalf("page %s generated %d times", pageID, generated[pageID])
 		}
 	}
+	staleToken, err := encryptPancakeToken(pancakePageTokenKey("old-key"), "stale-page-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE pancake_pages SET page_access_token_enc=?,status='error' WHERE page_id='p3'", staleToken); err != nil {
+		t.Fatal(err)
+	}
+	fourth := connect("third")
+	if fourth.Refreshed != 1 || fourth.Reused != 2 || fourth.NotVisible != 1 || generated["p3"] != 2 {
+		t.Fatalf("unreadable token was not refreshed: %#v, generated %#v", fourth, generated)
+	}
 	var status string
 	if err := db.QueryRow("SELECT status FROM pancake_pages WHERE page_id='p2'").Scan(&status); err != nil {
 		t.Fatal(err)
@@ -333,5 +344,36 @@ func TestPancakeSyncStoresDocumentedMetricsByPageAndKeepsPartialErrors(t *testin
 	metrics, err := app.pancakeMetrics(context.Background(), "2026-02")
 	if err != nil || len(metrics) != 1 || metrics[0].Email != "admin@example.com" || metrics[0].Metrics["pages"] == nil {
 		t.Fatalf("loaded metrics=%#v err=%v", metrics, err)
+	}
+}
+
+func TestPancakeSyncMarksUnreadablePageTokenForReconnect(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "test.db"), "admin@example.com", "password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	oldKeyToken, err := encryptPancakeToken(pancakePageTokenKey("old-key"), "page-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO pancake_pages(page_id,page_name,platform,page_access_token_enc,status)
+		VALUES('p1','Page One','facebook',?,'connected')`, oldKeyToken); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO pancake_page_assignments(page_id,email) VALUES('p1','admin@example.com')"); err != nil {
+		t.Fatal(err)
+	}
+	app := &api{db: db, pancakeKey: pancakePageTokenKey("new-key")}
+	result, err := app.syncPancake(context.Background(), "2026-02")
+	if err != nil || result.Found != 1 || result.Failed != 1 {
+		t.Fatalf("sync result=%#v err=%v", result, err)
+	}
+	var status, lastError string
+	if err := db.QueryRow("SELECT status,last_error FROM pancake_pages WHERE page_id='p1'").Scan(&status, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	if status != "needs_reconnect" || !strings.Contains(lastError, "Cập nhật token") {
+		t.Fatalf("status=%q error=%q", status, lastError)
 	}
 }

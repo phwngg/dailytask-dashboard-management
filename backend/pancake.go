@@ -504,7 +504,12 @@ func (a *api) pancakeConnect(w http.ResponseWriter, r *http.Request, me user) {
 		seen[page.ID] = true
 		old := existing[page.ID]
 		tokenEnc := old.TokenEnc
-		if tokenEnc == "" || old.Status == "needs_reconnect" {
+		refreshToken := tokenEnc == "" || old.Status == "needs_reconnect"
+		if !refreshToken {
+			_, refreshErr := decryptPancakeToken(a.pancakeKey, tokenEnc)
+			refreshToken = refreshErr != nil
+		}
+		if refreshToken {
 			pageToken, tokenErr := pancakeGeneratePageToken(r.Context(), userToken, page.ID)
 			if tokenErr != nil {
 				summary.Failed++
@@ -804,9 +809,10 @@ func (a *api) syncPancake(ctx context.Context, month string) (pancakeSyncResult,
 	for _, page := range pages {
 		token, err := decryptPancakeToken(a.pancakeKey, page.TokenEnc)
 		if err != nil {
+			message := "Không giải mã được Page Access Token; hãy dùng nút Cập nhật token để cấp lại"
 			result.Failed++
-			result.Errors = append(result.Errors, page.PageID+": không đọc được page token")
-			_, _ = a.db.ExecContext(ctx, "UPDATE pancake_pages SET status='error',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE page_id=?", "Không đọc được page token", page.PageID)
+			result.Errors = append(result.Errors, page.PageID+": "+message)
+			_, _ = a.db.ExecContext(ctx, "UPDATE pancake_pages SET status='needs_reconnect',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE page_id=?", message, page.PageID)
 			continue
 		}
 
