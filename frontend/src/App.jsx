@@ -151,6 +151,33 @@ function App() {
     } catch (e) { setError(e.message) }
   }
 
+  const connectPancake = async token => {
+    setError('')
+    try {
+      const result = await request('/admin/pancake/connect', { method:'POST', body:JSON.stringify({ user_access_token:token }) })
+      await load()
+      return result
+    } catch (e) { setError(e.message); throw e }
+  }
+
+  const syncPancake = async () => {
+    setError('')
+    try {
+      const result = await request('/admin/pancake/sync', { method:'POST', body:'{}' })
+      await load()
+      return result
+    } catch (e) { setError(e.message); throw e }
+  }
+
+  const mapPancakeChannel = async form => {
+    setError('')
+    try {
+      const result = await request('/admin/channels', { method:'PUT', body:JSON.stringify(form) })
+      await load()
+      return result
+    } catch (e) { setError(e.message); throw e }
+  }
+
   const logout = async () => {
     if (!demoMode) { try { await request('/logout', { method:'POST', body:'{}' }) } catch {} }
     setData(null)
@@ -247,7 +274,7 @@ function App() {
           {page === 'shifts' && <ShiftPage data={data}/> }
           {page === 'calendar' && <CalendarPage data={data}/>}
           {page === 'payroll' && <PayrollPage data={data} onCompute={computePayroll} demo={demoMode}/>}
-          {page === 'channels' && <ChannelPage data={data} demo={demoMode}/>}
+          {page === 'channels' && <ChannelPage data={data} demo={demoMode} onConnect={connectPancake} onSync={syncPancake} onMap={mapPancakeChannel}/>}
           {page === 'admin' && <AdminPage data={data}/>}
         </div>
       </main>
@@ -476,8 +503,70 @@ function PayrollPage({data,onCompute,demo}) {
   return <div><PageHeading eyebrow="TỔNG HỢP THU NHẬP" title="Lương thưởng" description="Kết quả KPI và thu nhập theo kỳ tính lương." action={<button className="secondary-button"><Icon name="calendar"/> {data.payrollMonth||'Chưa có kỳ lương'} <span>⌄</span></button>}/><div className="metric-grid three"><Metric label="Tổng quỹ lương" value={money(rows.reduce((s,r)=>s+Number(r.total||0),0))} delta="Kỳ hiện tại" color="purple" icon="₫"/><Metric label="KPI đạt trung bình" value={rows.length?Math.round(rows.reduce((s,r)=>s+Number(r.kpi_rate||0),0)/rows.length)+'%':'—'} delta="Toàn nhóm" color="green" icon="◉"/><Metric label="Thành viên" value={rows.length} delta="Trong kỳ" color="blue" icon="♙"/></div><section className="panel table-panel"><div className="table-toolbar"><h2>Bảng lương tháng {data.payrollMonth||''}</h2><div className="flex gap-2">{!demo && data.me?.caps?.includes('payroll.compute') && <button className="secondary-button" onClick={onCompute}>Tính lại từ Policy</button>}<button className="secondary-button">Xuất báo cáo <Icon name="arrow"/></button></div></div><div className="simple-table payroll-table"><div className="table-head"><span>THÀNH VIÊN</span><span>LƯƠNG CƠ BẢN</span><span>PHỤ CẤP</span><span>THƯỞNG / PHẠT</span><span>KPI</span><span>TỔNG NHẬN</span></div>{rows.map(r=>{const u=data.users?.find(x=>x.email===r.email);return <div className="table-row" key={r.email}><span className="title-cell"><Avatar user={u}/><b>{u?.name||r.email}</b></span><span>{money(r.base)}</span><span>{money(r.fees)}</span><span>{money(Number(r.bonus||0)-Number(r.penalty||0))}</span><span><span className="kpi-mini"><i style={{width:(r.kpi_rate||0)+'%'}}/></span>{Math.round(r.kpi_rate||0)}%</span><b>{money(r.total)}</b></div>})}</div></section></div>
 }
 
-function ChannelPage({data,demo}) {
-  return <div><PageHeading eyebrow="HIỆU SUẤT KÊNH" title="Chỉ số kênh" description="Theo dõi lượt xem, người theo dõi và hiệu quả nội dung." action={<button className="secondary-button"><Icon name="calendar"/> 30 ngày qua <span>⌄</span></button>}/><div className="metric-grid"><Metric label="Lượt xem" value={demo?"2.84M":"—"} delta={demo?"+18.2%":""} color="purple" icon="◉"/><Metric label="Người theo dõi mới" value={demo?"12,480":"—"} delta={demo?"+9.6%":""} color="green" icon="♙"/><Metric label="Video đã đăng" value={demo?"86":"—"} delta={demo?"+14.1%":""} color="orange" icon="▶"/><Metric label="Tỷ lệ tương tác" value={demo?"6.42%":"—"} delta={demo?"+1.2%":""} color="blue" icon="⌁"/></div><section className="panel channel-panel"><div className="panel-heading"><div><span className="eyebrow">TĂNG TRƯỞNG</span><h2>Hiệu suất theo tuần</h2></div><button className="dots-button"><Icon name="more"/></button></div><div className="chart-legend"><span><i className="legend-mark purple-mark"/>Lượt xem</span><span><i className="legend-mark coral-mark"/>Người theo dõi mới</span></div>{demo?<div className="chart-area">{[35,53,42,68,56,78,62,91,76,86,70,100,81,91,72,88,67,95,80,100].map((h,i)=><i key={i} style={{height:h+'%'}}/>)}</div>:<div className="channel-empty">Chưa có số liệu thống kê cho kỳ này.</div>}{demo && <div className="chart-labels"><span>Tuần 1</span><span>Tuần 2</span><span>Tuần 3</span><span>Tuần 4</span></div>}</section>{!demo && <section className="panel table-panel"><div className="table-toolbar"><h2>Kênh đã cấu hình</h2><span>{data.channels?.length||0} kênh</span></div><div className="simple-table admin-table"><div className="table-head"><span>NHÂN SỰ</span><span>KÊNH</span><span>NỀN TẢNG</span><span>VỊ TRÍ</span><span>TRẠNG THÁI</span></div>{(data.channels||[]).map((c,i)=>{const u=data.users?.find(x=>x.email===c.email);return <div className="table-row" key={c.email+'-'+c.slot}><span className="title-cell"><Avatar user={u}/><b>{u?.name||c.email}</b></span><span>{c.page_name||'Đã liên kết'}</span><span>{c.platform}</span><span>{c.slot===2?'Kênh 2':'Kênh chính'}</span><Status value="Đang hoạt động"/></div>})}</div></section>}<p className="muted channel-note">{demo?"Số liệu minh hoạ.":"Workbook cũ chưa có bản ghi ChannelStats; số liệu sẽ hiện sau khi nhập hoặc đồng bộ."}</p></div>
+function compactNumber(value) {
+  const n = Number(value || 0)
+  if (n >= 1000000) return (n / 1000000).toFixed(n >= 10000000 ? 0 : 2).replace(/\.00$/, '') + 'M'
+  if (n >= 1000) return (n / 1000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, '') + 'K'
+  return n.toLocaleString('vi-VN')
+}
+
+function ChannelPage({data,demo,onConnect,onSync,onMap}) {
+  const [connectOpen,setConnectOpen] = useState(false)
+  const [syncing,setSyncing] = useState(false)
+  const stats=data.channelStats||[]
+  const pancake=data.pancake||{pages:[],configured:0,connected:0,needs_reconnect:0}
+  const isAdmin=!demo && Boolean(data.me?.isAdmin||data.me?.caps?.includes('channel.sync'))
+  const total=(key)=>stats.reduce((sum,row)=>sum+Number(row[key]||0),0)
+  const views=demo?2840000:total('views'), followers=demo?12480:total('followers'), videos=demo?86:total('videos')
+  const runSync=async()=>{
+    try { setSyncing(true); await onSync() } finally { setSyncing(false) }
+  }
+  return <div>
+    <PageHeading eyebrow="HIỆU SUẤT KÊNH" title="Chỉ số kênh" description="Theo dõi số liệu Pancake theo tháng." action={isAdmin?<button className="secondary-button" onClick={runSync} disabled={syncing}><Icon name="calendar"/> {syncing?'Đang đồng bộ…':'Đồng bộ Pancake'}</button>:<button className="secondary-button" disabled><Icon name="calendar"/> Tháng {data.currentMonth||'hiện tại'}</button>}/>
+    {isAdmin && <section className="panel pancake-panel">
+      <div className="panel-heading"><div><span className="eyebrow">TÍCH HỢP PANCAKE</span><h2>{pancake.configured?(pancake.connected+'/'+pancake.configured+' page đã kết nối'):'Chưa kết nối Pancake'}</h2></div><button className="primary-button" onClick={()=>setConnectOpen(true)}>Cập nhật token</button></div>
+      <p className="muted pancake-help">{pancake.needs_reconnect?(pancake.needs_reconnect+' page cần kết nối lại. '):''}Token User chỉ dùng để lấy page và cấp lại page token khi cần; dữ liệu sync định kỳ dùng page token đã lưu.</p>
+      {pancake.pages?.length>0 && <div className="pancake-pages">{pancake.pages.map(page=><PancakePageRow key={page.page_id} page={page} users={data.users||[]} onMap={onMap}/>)}</div>}
+    </section>}
+    <div className="metric-grid">
+      <Metric label="Lượt xem" value={compactNumber(views)} delta={demo?'+18.2%':''} color="purple" icon="◉"/>
+      <Metric label="Người theo dõi" value={compactNumber(followers)} delta={demo?'+9.6%':''} color="green" icon="♙"/>
+      <Metric label="Video đã đăng" value={compactNumber(videos)} delta={demo?'+14.1%':''} color="orange" icon="▶"/>
+      <Metric label="Tỷ lệ tương tác" value={demo?'6.42%':'—'} delta={demo?'+1.2%':'Chưa có field tương ứng'} color="blue" icon="⌁"/>
+    </div>
+    <section className="panel channel-panel"><div className="panel-heading"><div><span className="eyebrow">TĂNG TRƯỞNG</span><h2>Tổng hợp tháng {data.currentMonth||'hiện tại'}</h2></div><button className="dots-button"><Icon name="more"/></button></div><div className="chart-legend"><span><i className="legend-mark purple-mark"/>Lượt xem</span><span><i className="legend-mark coral-mark"/>Người theo dõi</span></div>{demo?<><div className="chart-area">{[35,53,42,68,56,78,62,91,76,86,70,100,81,91,72,88,67,95,80,100].map((h,i)=><i key={i} style={{height:h+'%'}}/>)}</div><div className="chart-labels"><span>Tuần 1</span><span>Tuần 2</span><span>Tuần 3</span><span>Tuần 4</span></div></>:<div className="channel-empty">{stats.length?'Đã có dữ liệu tổng hợp. Biểu đồ theo tuần sẽ mở khi lưu số liệu theo ngày.':'Chưa có số liệu thống kê cho kỳ này.'}</div>}</section>
+    {!demo && <section className="panel table-panel"><div className="table-toolbar"><h2>Kênh đã cấu hình</h2><span>{data.channels?.length||0} kênh</span></div><div className="simple-table channel-mapping-table"><div className="table-head"><span>NHÂN SỰ</span><span>KÊNH</span><span>PAGE ID</span><span>NỀN TẢNG</span><span>VỊ TRÍ</span><span>TRẠNG THÁI</span></div>{(data.channels||[]).map(c=>{const u=data.users?.find(x=>x.email===c.email);return <div className="table-row" key={c.email+'-'+c.slot}><span className="title-cell"><Avatar user={u}/><b>{u?.name||c.email}</b></span><span>{c.page_name||'Đã liên kết'}</span><code className="pancake-page-id">{c.page_id||'—'}</code><span>{c.platform}</span><span>{c.slot===2?'Kênh 2':'Kênh chính'}</span><Status value="Đang hoạt động"/></div>})}</div></section>}
+    <p className="muted channel-note">{demo?'Số liệu minh hoạ.':stats.length?'Video count được đồng bộ từ Pancake. Views/follower chỉ hiện nếu đã có từ nguồn trước đó.':'Chưa có ChannelStats; hãy kết nối Pancake và gán page vào kênh.'}</p>
+    {connectOpen && <PancakeConnectModal onClose={()=>setConnectOpen(false)} onConnect={onConnect}/>}
+  </div>
+}
+
+function PancakeConnectModal({onClose,onConnect}) {
+  const [token,setToken]=useState('')
+  const [busy,setBusy]=useState(false)
+  const [error,setError]=useState('')
+  const [result,setResult]=useState(null)
+  const submit=async e=>{
+    e.preventDefault()
+    setError('')
+    setBusy(true)
+    try { setResult(await onConnect(token)); setToken('') } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
+  const summary=result?.summary
+  return <Modal title="Kết nối Pancake" onClose={onClose}><form className="modal-form" onSubmit={submit}><label>User Access Token<input type="password" autoComplete="off" value={token} onChange={e=>setToken(e.target.value)} placeholder="Dán token từ Pancake" required/></label><p className="form-help">Token chỉ gửi tới backend qua phiên đăng nhập. Backend không trả lại hoặc hiển thị token.</p>{error&&<div className="form-error">{error}</div>}{summary&&<div className="connect-result"><b>{summary.found} page tìm thấy</b><span>{summary.reused} giữ nguyên · {summary.created} tạo mới · {summary.refreshed} cấp lại · {summary.not_visible} không còn thấy</span>{result.status?.pages?.map(page=><div className="pancake-result-row" key={page.page_id}><code>{page.page_id}</code><span>{page.page_name||'Page không tên'}</span><Status value={page.status==='connected'?'Đã kết nối':page.status==='needs_reconnect'?'Cần kết nối lại':'Không hiển thị'}/></div>)}</div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Đóng</button><button className="primary-button" disabled={busy}>{busy?'Đang kiểm tra…':'Lấy page ID & kết nối'}</button></div></form></Modal>
+}
+
+function PancakePageRow({page,users,onMap}) {
+  const [email,setEmail]=useState(users[0]?.email||'')
+  const [slot,setSlot]=useState('1')
+  const [busy,setBusy]=useState(false)
+  const [error,setError]=useState('')
+  const map=async()=>{
+    setError('')
+    setBusy(true)
+    try { await onMap({page_id:page.page_id,page_name:page.page_name,email,slot:Number(slot)}) } catch (e) { setError(e.message) } finally { setBusy(false) }
+  }
+  return <div className="pancake-page-row"><div className="pancake-page-copy"><code>{page.page_id}</code><b>{page.page_name||'Page không tên'}</b><small>{page.platform||'pancake'}</small></div><Status value={page.status==='connected'?'Đã kết nối':page.status==='needs_reconnect'?'Cần kết nối lại':page.status==='not_visible'?'Không còn thấy':'Lỗi'}/>{page.mapped?<span className="pancake-mapped">Đã gán kênh</span>:<div className="pancake-page-actions"><select aria-label={'Nhân sự cho '+page.page_id} value={email} onChange={e=>setEmail(e.target.value)}>{users.map(user=><option key={user.email} value={user.email}>{user.name}</option>)}</select><select aria-label={'Slot cho '+page.page_id} value={slot} onChange={e=>setSlot(e.target.value)}><option value="1">Slot 1</option><option value="2">Slot 2</option></select><button className="secondary-button" onClick={map} disabled={busy}>{busy?'Đang lưu…':'Gán kênh'}</button></div>}{error&&<small className="pancake-row-error">{error}</small>}</div>
 }
 
 function CalendarPage({data}) {

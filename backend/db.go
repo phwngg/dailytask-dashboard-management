@@ -87,6 +87,12 @@ CREATE TABLE IF NOT EXISTS channel_stats (
   videos REAL NOT NULL DEFAULT 0, views REAL NOT NULL DEFAULT 0, followers REAL NOT NULL DEFAULT 0,
   synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, source TEXT NOT NULL DEFAULT '', PRIMARY KEY(month,email,slot)
 );
+CREATE TABLE IF NOT EXISTS pancake_pages (
+  page_id TEXT PRIMARY KEY, page_name TEXT NOT NULL DEFAULT '', platform TEXT NOT NULL DEFAULT '',
+  page_access_token_enc TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'connected',
+  last_seen_at TEXT NOT NULL DEFAULT '', last_sync_at TEXT NOT NULL DEFAULT '',
+  last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 func openDB(path, adminEmail, adminPassword string) (*sql.DB, error) {

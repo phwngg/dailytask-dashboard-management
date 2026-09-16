@@ -19,7 +19,11 @@ func main() {
 	}
 	defer db.Close()
 
-	app := &api{db: db, cookieSecure: strings.EqualFold(os.Getenv("COOKIE_SECURE"), "true")}
+	app := &api{
+		db:           db,
+		cookieSecure: strings.EqualFold(os.Getenv("COOKIE_SECURE"), "true"),
+		pancakeKey:   pancakePageTokenKey(os.Getenv("PANCAKE_ENCRYPTION_KEY")),
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", app.health)
 	mux.HandleFunc("POST /api/login", app.login)
@@ -37,9 +41,14 @@ func main() {
 	mux.HandleFunc("GET /api/admin/users", app.protected(app.adminUsers))
 	mux.HandleFunc("POST /api/admin/users", app.protected(app.createUser))
 	mux.HandleFunc("PATCH /api/admin/users/{email}", app.protected(app.updateUser))
+	mux.HandleFunc("POST /api/admin/pancake/connect", app.protected(app.pancakeConnect))
+	mux.HandleFunc("POST /api/admin/pancake/sync", app.protected(app.pancakeSync))
+	mux.HandleFunc("PUT /api/admin/channels", app.protected(app.mapPancakeChannel))
 	mux.HandleFunc("GET /api/payroll", app.protected(app.payroll))
 	mux.HandleFunc("POST /api/payroll/compute", app.protected(app.computePayroll))
 	mux.Handle("/", staticFiles(env("STATIC_DIR", "../frontend/dist")))
+
+	go app.pancakeAutoSync()
 
 	server := &http.Server{
 		Addr:              ":" + env("PORT", "8080"),

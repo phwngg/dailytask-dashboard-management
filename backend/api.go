@@ -21,6 +21,7 @@ import (
 type api struct {
 	db           *sql.DB
 	cookieSecure bool
+	pancakeKey   []byte
 }
 
 type user struct {
@@ -69,6 +70,7 @@ type channelMapping struct {
 	Email    string `json:"email"`
 	Slot     int    `json:"slot"`
 	Platform string `json:"platform"`
+	PageID   string `json:"page_id"`
 	PageName string `json:"page_name"`
 }
 

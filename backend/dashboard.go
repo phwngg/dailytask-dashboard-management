@@ -81,13 +81,23 @@ func (a *api) bootstrap(w http.ResponseWriter, r *http.Request, me user) {
 		return
 	}
 	currentMonth := time.Now().Format("2006-01")
+	channelStats, err := a.channelStats(ctx, currentMonth)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	pancake, err := a.pancakeStatus(ctx)
+	if err != nil {
+		fail(w, err)
+		return
+	}
 	mePub := me
 	mePub.Caps = me.Caps
 	writeJSON(w, http.StatusOK, map[string]any{
 		"me": mePub, "users": users, "tasks": tasks, "contentPlan": plans, "pendingPlanCount": pendingPlanCount,
 		"shoots": shoots, "lives": lives, "meetings": meetings, "channels": channels,
 		"shifts": shifts, "shiftsWeek": week, "payroll": payroll,
-		"payrollMonth": month, "currentMonth": currentMonth,
+		"payrollMonth": month, "currentMonth": currentMonth, "channelStats": channelStats, "pancake": pancake,
 		"autoInputs": []any{}, "inputLabels": map[string]string{},
 		"serverTime": time.Now().Format("2006-01-02 15:04"),
 	})
@@ -174,7 +184,7 @@ func (a *api) schedules(ctx context.Context) ([]schedule, []schedule, error) {
 }
 
 func (a *api) channels(ctx context.Context) ([]channelMapping, error) {
-	rows, err := a.db.QueryContext(ctx, "SELECT email,slot,platform,page_name FROM channels ORDER BY email,slot")
+	rows, err := a.db.QueryContext(ctx, "SELECT email,slot,platform,page_id,page_name FROM channels ORDER BY email,slot")
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +192,7 @@ func (a *api) channels(ctx context.Context) ([]channelMapping, error) {
 	out := []channelMapping{}
 	for rows.Next() {
 		var c channelMapping
-		if err := rows.Scan(&c.Email, &c.Slot, &c.Platform, &c.PageName); err != nil {
+		if err := rows.Scan(&c.Email, &c.Slot, &c.Platform, &c.PageID, &c.PageName); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

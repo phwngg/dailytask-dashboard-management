@@ -19,6 +19,7 @@ Terminal 1:
 cd backend
 export INITIAL_ADMIN_EMAIL=admin@example.com
 export INITIAL_ADMIN_PASSWORD='change-this-to-a-long-unique-password'
+export PANCAKE_ENCRYPTION_KEY='change-this-to-a-stable-random-secret'
 go run .
 ```
 
@@ -37,7 +38,7 @@ Mở `http://localhost:5173`. Vite chuyển tiếp `/api` sang Go ở `localhost
 ```sh
 cd deployment
 cp .env.example .env
-# Sửa INITIAL_ADMIN_EMAIL và INITIAL_ADMIN_PASSWORD trong .env
+# Sửa INITIAL_ADMIN_EMAIL, INITIAL_ADMIN_PASSWORD và PANCAKE_ENCRYPTION_KEY trong .env
 docker compose up --build -d
 ```
 
@@ -51,13 +52,14 @@ Mở `http://localhost:8088` (hoặc cổng đặt trong `HTTP_PORT`). Go phục
 - `POST /api/plans`, `PATCH /api/plans/{id}`, `DELETE /api/plans/{id}`
 - `PUT /api/shifts`, `POST /api/schedules`, `POST /api/meetings`
 - `GET/POST /api/admin/users`, `PATCH /api/admin/users/{email}`
+- POST /api/admin/pancake/connect, POST /api/admin/pancake/sync, PUT /api/admin/channels
 - `GET /api/payroll`, `POST /api/payroll/compute`
 
 Kiểm tra backend bằng `cd backend && go test ./...`; kiểm tra giao diện bằng `cd frontend && npm run build`.
 
 ## Dữ liệu và nghiệp vụ đã chuyển
 
-Workbook cũ đã được nhập vào SQLite volume của môi trường đang chạy: người dùng, task, content plan (đã loại 170 dòng placeholder), lịch quay/livestream, cuộc họp, ca làm, policy, inputs, snapshot payroll và cấu hình kênh. Database không nằm trong Git; tài khoản quản trị khởi tạo của app được giữ lại. Mật khẩu cũ chỉ lưu dạng hash tương thích tạm thời và tự nâng lên bcrypt sau lần đăng nhập thành công.
+Workbook cũ đã được nhập vào SQLite volume của môi trường đang chạy: người dùng, task, content plan (đã loại 170 dòng placeholder), lịch quay/livestream, cuộc họp, ca làm, policy, inputs, snapshot payroll và cấu hình kênh. Database không nằm trong Git; tài khoản quản trị khởi tạo của app được giữ lại. Mật khẩu cũ chỉ lưu dạng hash tương thích tạm thời và tự nâng lên bcrypt sau lần đăng nhập thành công. Kết nối Pancake được quản lý từ trang Chỉ số kênh; cần đặt PANCAKE_ENCRYPTION_KEY trong .env để mã hóa page token.
 
 Tính lương và gộp KPI từ Inputs, task/lịch hoàn thành và ChannelStats chạy trong Go; Apps Script chỉ còn bản lưu trữ. Snapshot payroll tháng 2026-08 không khớp kết quả tính lại theo Policy/Inputs hiện có ở 7/9 người. Vì vậy nút tính lại yêu cầu xác nhận trước khi ghi đè. ChannelStats trong workbook trống; đồng bộ Pancake, Google Calendar và email chưa được chuyển. Trang Lịch quay & họp và cấu hình kênh hiển thị dữ liệu đã nhập.
 

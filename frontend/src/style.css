@@ -73,3 +73,24 @@ input,select,textarea{accent-color:var(--brand)}
 .brand{width:100%;min-width:0;border:0;background:transparent;text-align:left;cursor:pointer;white-space:nowrap;gap:7px;padding:0 6px}.brand-mark{flex:0 0 30px;margin-right:2px}.brand-badge{flex:none}.brand:focus-visible,.workspace-switch:focus-visible,.breadcrumb button:focus-visible,.account-menu summary:focus-visible{outline:3px solid var(--brand-line);outline-offset:3px}.workspace-switch{cursor:pointer;gap:10px}.workspace-switch:hover{border-color:var(--brand-line);background:#fcfbff}.workspace-dot{flex:none}.workspace-switch>span:nth-child(2){flex:1;min-width:0}.workspace-switch small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.workspace-caret{flex:none}.breadcrumb button{padding:5px 7px;margin-left:-7px;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;cursor:pointer}.breadcrumb button:hover{background:var(--brand-soft);color:var(--brand)}.account-menu{position:relative;display:flex;align-items:center}.account-menu summary{list-style:none;display:flex;align-items:center;gap:5px;padding:3px;border-radius:999px;cursor:pointer}.account-menu summary::-webkit-details-marker{display:none}.account-menu summary:hover{background:var(--brand-soft)}.account-caret{font-size:12px;color:var(--ink-500)}.account-popover{position:absolute;z-index:30;right:0;top:calc(100% + 10px);width:260px;padding:14px;background:rgba(255,255,255,.98);border:1px solid var(--line);border-radius:16px;box-shadow:0 14px 36px rgba(30,27,46,.16);backdrop-filter:blur(14px)}.account-identity{display:flex;align-items:center;gap:10px;min-width:0}.account-identity>span:last-child{display:grid;gap:4px;min-width:0}.account-identity b{font-size:13px;color:var(--ink-900)}.account-identity small{font-size:11px;color:var(--ink-500);overflow:hidden;text-overflow:ellipsis}.account-role{margin:12px 0;padding:9px 10px;border-radius:10px;background:var(--brand-soft);color:var(--brand-700);font-size:11px;font-weight:700}.account-logout{width:100%;display:flex;align-items:center;gap:9px;padding:10px;border:0;border-radius:10px;background:transparent;color:#be123c;text-align:left;font:inherit;font-size:12px;font-weight:700;cursor:pointer}.account-logout:hover{background:#fff1f2}.account-logout .icon{width:16px}@media(max-width:760px){.brand{padding:0;justify-content:center}.account-popover{right:-3px;width:min(260px,calc(100vw - 82px))}}
 
 @media(max-width:760px){.breadcrumb>button{display:none}}
+
+.pancake-panel{padding:18px 20px}
+.pancake-help{font-size:12px;line-height:1.5;margin:10px 0 14px}
+.pancake-pages{display:grid;gap:8px}
+.pancake-page-row{display:flex;align-items:center;gap:12px;position:relative;padding:10px 0;border-top:1px solid var(--line-2)}
+.pancake-page-copy{display:grid;gap:3px;min-width:190px;flex:1}
+.pancake-page-copy code,.pancake-page-id,.pancake-result-row code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--brand-700)}
+.pancake-page-copy b{font-size:12px}
+.pancake-page-copy small{font-size:10px;color:var(--ink-500)}
+.pancake-page-actions{display:flex;align-items:center;gap:7px}
+.pancake-page-actions select{height:34px;max-width:180px;padding:0 8px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink-900);font-size:11px}
+.pancake-mapped{font-size:11px;color:var(--success);font-weight:700}
+.pancake-row-error{position:absolute;right:0;bottom:-9px;color:var(--danger);font-size:10px}
+.channel-mapping-table .table-head,.channel-mapping-table .table-row{grid-template-columns:1.2fr 1fr 1.25fr .75fr .8fr 1fr;min-width:850px}
+.form-help{margin:0;color:var(--ink-500);font-size:11px;line-height:1.5}
+.connect-result{display:grid;gap:7px;padding:11px;border:1px solid var(--line);border-radius:12px;background:#fcfbff}
+.connect-result>b{font-size:12px}
+.connect-result>span{font-size:11px;color:var(--ink-500)}
+.pancake-result-row{display:flex;align-items:center;gap:8px;font-size:11px}
+.pancake-result-row span{flex:1}
+@media(max-width:760px){.pancake-page-row{align-items:flex-start;flex-wrap:wrap}.pancake-page-copy{min-width:160px}.pancake-page-actions{width:100%;flex-wrap:wrap}.pancake-page-actions select{flex:1;max-width:none}}
