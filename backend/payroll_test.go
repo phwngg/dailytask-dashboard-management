@@ -2,8 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -63,5 +67,41 @@ func TestBuildAutoInputs(t *testing.T) {
 	want := map[string]float64{"posts": 2, "live_bridge": 1, "live_total": 2, "photo_session": 3, "videos_2": 6, "views_2": 20, "followers_2": 3}
 	if !reflect.DeepEqual(got["owner@example.com"], want) {
 		t.Fatalf("auto inputs mismatch: got %v", got)
+	}
+}
+
+func TestPayrollPolicyAPIAllowsManagerToSaveFormula(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "app.db"), "admin@example.com", "password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := &api{db: db}
+	body := `{"email":"admin@example.com","code":"video_fee","label":"Phí video","type":"per_unit","input_key":"videos","rate":100000,"active":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/payroll/policies", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	app.createPayrollPolicy(rr, req, user{IsAdmin: true})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create returned %d: %s", rr.Code, rr.Body.String())
+	}
+	var created struct {
+		ID int `json:"id"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&created); err != nil || created.ID == 0 {
+		t.Fatalf("create response = %#v, err=%v", created, err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/payroll/policies", nil)
+	rr = httptest.NewRecorder()
+	app.payrollPolicies(rr, req, user{IsAdmin: true})
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "video_fee") {
+		t.Fatalf("list returned %d: %s", rr.Code, rr.Body.String())
+	}
+	updated := `{"email":"admin@example.com","code":"video_fee","label":"Phí video mới","type":"per_unit","input_key":"videos","rate":120000,"active":true}`
+	req = httptest.NewRequest(http.MethodPut, "/api/payroll/policies/"+fmt.Sprint(created.ID), strings.NewReader(updated))
+	req.SetPathValue("id", fmt.Sprint(created.ID))
+	rr = httptest.NewRecorder()
+	app.updatePayrollPolicy(rr, req, user{IsAdmin: true})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update returned %d: %s", rr.Code, rr.Body.String())
 	}
 }

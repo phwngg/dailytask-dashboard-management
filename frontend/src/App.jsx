@@ -38,6 +38,7 @@ const demo = import.meta.env.DEV ? {
     {email:'chi@example.com',T2:'S',T3:'S',T4:'C',T5:'S',T6:'C',T7:'Off',CN:'Off'},
   ],
   payrollMonth:'2026-08',
+  currentMonth:'2026-09',
   payroll:[
     {email:'admin@example.com',base:22000000,fees:3200000,bonus:1000000,penalty:0,total:26200000,kpi_ok:true,kpi_rate:100},
     {email:'an@example.com',base:9000000,fees:1250000,bonus:500000,penalty:0,total:10750000,kpi_ok:true,kpi_rate:92},
@@ -160,11 +161,20 @@ function App() {
     } catch (e) { setError(e.message); throw e }
   }
 
-  const syncPancake = async () => {
+  const syncPancake = async range => {
     setError('')
     try {
-      const result = await request('/admin/pancake/sync', { method:'POST', body:'{}' })
+      const result = await request('/admin/pancake/sync', { method:'POST', body:JSON.stringify(range || {}) })
       await load()
+      return result
+    } catch (e) { setError(e.message); throw e }
+  }
+
+  const loadPancakeMetrics = async (from, to) => {
+    const query = `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    try {
+      const result = await request('/pancake/metrics' + query)
+      setData(current => current ? {...current, pancakeMetrics:result.metrics || [], pancakePeriod:result.period, pancakeFrom:result.from, pancakeTo:result.to} : current)
       return result
     } catch (e) { setError(e.message); throw e }
   }
@@ -292,7 +302,7 @@ function App() {
           {page === 'shifts' && <ShiftPage data={data}/> }
           {page === 'calendar' && <CalendarPage data={data}/>}
           {page === 'payroll' && <PayrollPage data={data} onCompute={computePayroll} demo={demoMode}/>}
-          {page === 'channels' && <ChannelPage data={data} demo={demoMode} onConnect={connectPancake} onSync={syncPancake} onMap={mapPancakeChannel} onUnmap={unmapPancakeChannel}/>}
+          {page === 'channels' && <ChannelPage data={data} demo={demoMode} onConnect={connectPancake} onSync={syncPancake} onLoadMetrics={loadPancakeMetrics} onMap={mapPancakeChannel} onUnmap={unmapPancakeChannel}/>}
           {page === 'admin' && <AdminPage data={data}/>}
         </div>
       </main>
@@ -516,9 +526,34 @@ function ShiftPage({data}) {
   return <div><PageHeading eyebrow="VẬN HÀNH NHÓM" title="Lịch làm việc" description="Lịch phân ca của nhóm trong tuần." action={<button className="secondary-button"><Icon name="calendar"/> Tuần này <span>⌄</span></button>}/><section className="panel table-panel"><div className="shift-heading"><div><h2>Tuần bắt đầu {data.shiftsWeek||'—'}</h2><p>Phân ca làm việc và lịch sản xuất nội dung.</p></div><div className="shift-legend"><span><i className="shift-pill s"/>Sáng</span><span><i className="shift-pill c"/>Chiều</span><span><i className="shift-pill live"/>Live / Quay</span><span><i className="shift-pill off"/>Nghỉ</span></div></div><div className="shift-table"><div className="shift-row shift-head"><span>THÀNH VIÊN</span>{days.map(d=><span key={d}>{d}</span>)}</div>{(data.shifts||[]).map(row=>{const u=data.users?.find(x=>x.email===row.email);return <div className="shift-row" key={row.email}><span className="title-cell"><Avatar user={u}/><b>{u?.name||row.email}</b></span>{days.map(d=><span key={d}><i className={'shift-cell '+(row[d]==='S'?'s':row[d]==='C'?'c':row[d]==='Live'?'live':row[d]==='Quay'?'live':'off')}>{row[d]||'—'}</i></span>)}</div>})}</div></section></div>
 }
 
+const payrollPolicyLabels={fixed:'Cố định theo tháng',per_unit:'Theo sản lượng',per_unit_tenure:'Theo sản lượng + thâm niên',tier:'Thưởng theo mốc',percent:'Theo phần trăm',penalty_below:'Phạt dưới tối thiểu',penalty_per_unit:'Phạt theo số lượng'}
+
 function PayrollPage({data,onCompute,demo}) {
   const rows=data.payroll||[]
-  return <div><PageHeading eyebrow="TỔNG HỢP THU NHẬP" title="Lương thưởng" description="Kết quả KPI và thu nhập theo kỳ tính lương." action={<button className="secondary-button"><Icon name="calendar"/> {data.payrollMonth||'Chưa có kỳ lương'} <span>⌄</span></button>}/><div className="metric-grid three"><Metric label="Tổng quỹ lương" value={money(rows.reduce((s,r)=>s+Number(r.total||0),0))} delta="Kỳ hiện tại" color="purple" icon="₫"/><Metric label="KPI đạt trung bình" value={rows.length?Math.round(rows.reduce((s,r)=>s+Number(r.kpi_rate||0),0)/rows.length)+'%':'—'} delta="Toàn nhóm" color="green" icon="◉"/><Metric label="Thành viên" value={rows.length} delta="Trong kỳ" color="blue" icon="♙"/></div><section className="panel table-panel"><div className="table-toolbar"><h2>Bảng lương tháng {data.payrollMonth||''}</h2><div className="flex gap-2">{!demo && data.me?.caps?.includes('payroll.compute') && <button className="secondary-button" onClick={onCompute}>Tính lại từ Policy</button>}<button className="secondary-button">Xuất báo cáo <Icon name="arrow"/></button></div></div><div className="simple-table payroll-table"><div className="table-head"><span>THÀNH VIÊN</span><span>LƯƠNG CƠ BẢN</span><span>PHỤ CẤP</span><span>THƯỞNG / PHẠT</span><span>KPI</span><span>TỔNG NHẬN</span></div>{rows.map(r=>{const u=data.users?.find(x=>x.email===r.email);return <div className="table-row" key={r.email}><span className="title-cell"><Avatar user={u}/><b>{u?.name||r.email}</b></span><span>{money(r.base)}</span><span>{money(r.fees)}</span><span>{money(Number(r.bonus||0)-Number(r.penalty||0))}</span><span><span className="kpi-mini"><i style={{width:(r.kpi_rate||0)+'%'}}/></span>{Math.round(r.kpi_rate||0)}%</span><b>{money(r.total)}</b></div>})}</div></section></div>
+  const canManage=!demo && Boolean(data.me?.isAdmin||data.me?.caps?.includes('payroll.compute'))
+  return <div><PageHeading eyebrow="TỔNG HỢP THU NHẬP" title="Lương thưởng" description="Kết quả KPI và thu nhập theo kỳ tính lương." action={<button className="secondary-button"><Icon name="calendar"/> {data.payrollMonth||'Chưa có kỳ lương'} <span>⌄</span></button>}/><div className="metric-grid three"><Metric label="Tổng quỹ lương" value={money(rows.reduce((s,r)=>s+Number(r.total||0),0))} delta="Kỳ hiện tại" color="purple" icon="₫"/><Metric label="KPI đạt trung bình" value={rows.length?Math.round(rows.reduce((s,r)=>s+Number(r.kpi_rate||0),0)/rows.length)+'%':'—'} delta="Toàn nhóm" color="green" icon="◉"/><Metric label="Thành viên" value={rows.length} delta="Trong kỳ" color="blue" icon="♙"/></div><section className="panel table-panel"><div className="table-toolbar"><h2>Bảng lương tháng {data.payrollMonth||''}</h2><div className="flex gap-2">{canManage&&<button className="secondary-button" onClick={onCompute}>Tính lại từ Policy</button>}<button className="secondary-button">Xuất báo cáo <Icon name="arrow"/></button></div></div><div className="simple-table payroll-table"><div className="table-head"><span>THÀNH VIÊN</span><span>LƯƠNG CƠ BẢN</span><span>PHỤ CẤP</span><span>THƯỞNG / PHẠT</span><span>KPI</span><span>TỔNG NHẬN</span></div>{rows.map(r=>{const u=data.users?.find(x=>x.email===r.email);return <div className="table-row" key={r.email}><span className="title-cell"><Avatar user={u}/><b>{u?.name||r.email}</b></span><span>{money(r.base)}</span><span>{money(r.fees)}</span><span>{money(Number(r.bonus||0)-Number(r.penalty||0))}</span><span><span className="kpi-mini"><i style={{width:(r.kpi_rate||0)+'%'}}/></span>{Math.round(r.kpi_rate||0)}%</span><b>{money(r.total)}</b></div>})}</div></section>{canManage&&<PayrollPolicyPanel users={data.users||[]}/>}</div>
+}
+
+function PayrollPolicyPanel({users}) {
+  const blank=()=>({id:0,email:users[0]?.email||'',code:'',label:'',type:'per_unit',input_key:'',rate:0,tiers:'',minimum:0,note:'',active:true})
+  const [policies,setPolicies]=useState([])
+  const [form,setForm]=useState(blank)
+  const [editing,setEditing]=useState(false)
+  const [busy,setBusy]=useState(false)
+  const [error,setError]=useState('')
+  const load=async()=>{try{const result=await request('/payroll/policies');setPolicies(result.policies||[])}catch(e){setError(e.message)}}
+  useEffect(()=>{void load()},[])
+  const change=(key,value)=>setForm(current=>({...current,[key]:value}))
+  const edit=policy=>{setForm({...policy,active:Boolean(policy.active)});setEditing(true);setError('')}
+  const save=async event=>{
+    event.preventDefault();setBusy(true);setError('')
+    try{
+      const payload={...form,rate:Number(form.rate||0),minimum:Number(form.minimum||0)}
+      await request(form.id?`/payroll/policies/${form.id}`:'/payroll/policies',{method:form.id?'PUT':'POST',body:JSON.stringify(payload)})
+      setEditing(false);setForm(blank());await load()
+    }catch(e){setError(e.message)}finally{setBusy(false)}
+  }
+  return <section className="panel policy-panel"><div className="table-toolbar"><div><span className="eyebrow">CẤU HÌNH TÍNH LƯƠNG</span><h2>Công thức KPI theo nhân sự</h2></div><button className="primary-button" onClick={()=>{setForm(blank());setEditing(true);setError('')}}>Thêm công thức</button></div><p className="muted policy-help">Quản lý nhập từng khoản theo người, chỉ số đầu vào và cách tính. Sau khi lưu, bấm “Tính lại từ Policy” để tạo lại snapshot kỳ lương.</p>{error&&<div className="form-error">{error}</div>}{editing&&<form className="policy-editor" onSubmit={save}><div className="form-two"><label>Nhân sự<select value={form.email} onChange={e=>change('email',e.target.value)} required>{users.map(user=><option key={user.email} value={user.email}>{user.name}</option>)}</select></label><label>Loại công thức<select value={form.type} onChange={e=>change('type',e.target.value)}>{Object.entries(payrollPolicyLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label></div><div className="form-two"><label>Mã công thức<input value={form.code} onChange={e=>change('code',e.target.value)} placeholder="vd: content_fee" required/></label><label>Tên hiển thị<input value={form.label} onChange={e=>change('label',e.target.value)} placeholder="vd: Phí sản xuất video" required/></label></div><div className="form-two"><label>Chỉ số đầu vào<input value={form.input_key} onChange={e=>change('input_key',e.target.value)} placeholder={form.type==='fixed'?'Không cần với lương cố định':'vd: videos'} required={form.type!=='fixed'}/></label><label>Đơn giá / tỷ lệ<input type="number" min="0" step="any" value={form.rate} onChange={e=>change('rate',e.target.value)}/></label></div><div className="form-two"><label>Mức tối thiểu<input type="number" min="0" step="any" value={form.minimum} onChange={e=>change('minimum',e.target.value)}/></label><label>Ngưỡng thưởng<input value={form.tiers} onChange={e=>change('tiers',e.target.value)} placeholder="vd: 10:500000;20:1000000"/></label></div><label>Ghi chú<textarea value={form.note} onChange={e=>change('note',e.target.value)} rows="2" placeholder="Giải thích cách tính để người rà soát hiểu."/></label><label className="checkline"><input type="checkbox" checked={form.active} onChange={e=>change('active',e.target.checked)}/> Đang áp dụng</label><div className="modal-actions"><button type="button" className="secondary-button" onClick={()=>setEditing(false)}>Huỷ</button><button className="primary-button" disabled={busy}>{busy?'Đang lưu…':'Lưu công thức'}</button></div></form>}<div className="simple-table policy-table"><div className="table-head"><span>NHÂN SỰ</span><span>KHOẢN TÍNH</span><span>KIỂU</span><span>ĐẦU VÀO</span><span>ĐƠN GIÁ</span><span>THAO TÁC</span></div>{policies.map(policy=><div className="table-row" key={policy.id}><span>{policy.user_name||policy.email}</span><span><b>{policy.label}</b><small>{policy.code}</small></span><span>{payrollPolicyLabels[policy.type]||policy.type}</span><span>{policy.input_key||'—'}</span><span>{money(policy.rate)}</span><button className="dots-button" onClick={()=>edit(policy)} aria-label={'Sửa '+policy.label}>Sửa</button></div>)}{!policies.length&&<div className="policy-empty">Chưa có công thức. Thêm công thức đầu tiên để bắt đầu tính.</div>}</div></section>
 }
 
 function compactNumber(value) {
@@ -572,14 +607,37 @@ function pancakePageReport(page) {
   }
 }
 
-function pancakeWeekBars(rows, field, month) {
-  const [year,monthNumber]=String(month||'').split('-').map(Number)
-  if (!year||!monthNumber) return []
-  const days=new Date(year,monthNumber,0).getDate()
-  const weeks=Array.from({length:Math.ceil(days/7)},(_,i)=>({label:`${i*7+1}–${Math.min(days,(i+1)*7)}`,value:0}))
+function pancakeRangeParts(period) {
+  const text=String(period||'')
+  const range=text.match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/)
+  if(range) return {from:range[1],to:range[2]}
+  const month=text.match(/^(\d{4})-(\d{2})$/)
+  if(!month) return null
+  const days=new Date(Number(month[1]),Number(month[2]),0).getDate()
+  return {from:`${month[1]}-${month[2]}-01`,to:`${month[1]}-${month[2]}-${String(days).padStart(2,'0')}`}
+}
+
+function pancakeLocalDate(value) {
+  const match=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return match?new Date(Number(match[1]),Number(match[2])-1,Number(match[3])):null
+}
+
+function pancakeWeekBars(rows, field, period) {
+  const range=pancakeRangeParts(period)
+  if(!range) return []
+  const start=pancakeLocalDate(range.from)
+  const end=pancakeLocalDate(range.to)
+  if(!start||!end||start>end) return []
+  const totalDays=Math.round((end-start)/86400000)+1
+  const weeks=Array.from({length:Math.ceil(totalDays/7)},(_,i)=>{
+    const from=new Date(start); from.setDate(start.getDate()+i*7)
+    const to=new Date(from); to.setDate(to.getDate()+Math.min(6,totalDays-i*7-1))
+    return {label:from.getMonth()===to.getMonth()?`${from.getDate()}–${to.getDate()}`:`${from.getDate()}/${from.getMonth()+1}–${to.getDate()}/${to.getMonth()+1}`,value:0}
+  })
   rows.forEach(row=>{
-    const day=Number(String(row.hour||'').match(/^\d{4}-\d{2}-(\d{2})/)?.[1])
-    if(day>0&&day<=days) weeks[Math.floor((day-1)/7)].value+=pancakeNumber(row[field])
+    const date=pancakeLocalDate(row.hour||row.date||row.time)
+    if(!date||date<start||date>end) return
+    weeks[Math.floor((date-start)/86400000/7)].value+=pancakeNumber(row[field])
   })
   return weeks
 }
@@ -589,11 +647,10 @@ function pancakeDate(value) {
   return match?`${match[3]}/${match[2]}/${match[1]}`:'—'
 }
 
-function pancakePeriod(month) {
-  const [year,monthNumber]=String(month||'').split('-').map(Number)
-  if(!year||!monthNumber) return month||'Kỳ hiện tại'
-  const end=new Date(year,monthNumber,0).getDate()
-  return `01/${String(monthNumber).padStart(2,'0')}/${year} – ${String(end).padStart(2,'0')}/${String(monthNumber).padStart(2,'0')}/${year}`
+function pancakePeriod(period) {
+  const range=pancakeRangeParts(period)
+  if(!range) return period||'Kỳ hiện tại'
+  return `${pancakeDate(range.from)} – ${pancakeDate(range.to)}`
 }
 
 function pancakeAverageResponse(milliseconds) {
@@ -682,14 +739,18 @@ function PancakeReportTable({title,note,columns,rows,empty='Chưa có dữ liệ
   </section>
 }
 
-function ChannelPage({data,demo,onConnect,onSync,onMap,onUnmap}) {
+function ChannelPage({data,demo,onConnect,onSync,onLoadMetrics,onMap,onUnmap}) {
   const [connectOpen,setConnectOpen] = useState(false)
   const [syncing,setSyncing] = useState(false)
   const [syncResult,setSyncResult] = useState(null)
   const [syncError,setSyncError] = useState('')
+  const initialRange=pancakeRangeParts(data.pancakePeriod||data.currentMonth)||{from:'',to:''}
+  const [from,setFrom]=useState(data.pancakeFrom||initialRange.from)
+  const [to,setTo]=useState(data.pancakeTo||initialRange.to)
   const stats=data.channelStats||[]
   const pancake=data.pancake||{pages:[],configured:0,connected:0,needs_reconnect:0}
   const metricPages=data.pancakeMetrics||[]
+  const period=data.pancakePeriod||data.currentMonth
   const assignedMetrics=metricPages.filter(page=>page.email)
   const reports=assignedMetrics.map(pancakePageReport)
   const isAdmin=!demo && Boolean(data.me?.isAdmin||data.me?.caps?.includes('channel.sync'))
@@ -697,12 +758,23 @@ function ChannelPage({data,demo,onConnect,onSync,onMap,onUnmap}) {
   const reportTotal=key=>reports.reduce((sum,report)=>sum+report[key],0)
   const hasPosts=reports.some(report=>report.hasPosts)
   const hasPageStats=reports.some(report=>report.hasPageStats)
-  const videos=demo?86:(hasPosts?reportTotal('videos'):total('videos'))
-  const views=demo?compactNumber(2840000):(total('views')?compactNumber(total('views')):'—')
-  const followers=demo?compactNumber(12480):(total('followers')?compactNumber(total('followers')):'—')
+  const customRange=String(period||'').includes('..')
+  const videos=demo?86:(hasPosts?reportTotal('videos'):(customRange?'—':total('videos')))
+  const views=demo?compactNumber(2840000):(!customRange&&total('views')?compactNumber(total('views')):'—')
+  const followers=demo?compactNumber(12480):(!customRange&&total('followers')?compactNumber(total('followers')):'—')
+  const runLoad=async()=>{
+    setSyncError('')
+    if(!from||!to||from>to){setSyncError('Vui lòng chọn khoảng ngày hợp lệ.');return}
+    try { await onLoadMetrics(from,to) } catch (e) { setSyncError(e.message) }
+  }
   const runSync=async()=>{
     setSyncError('')
-    try { setSyncing(true); setSyncResult(await onSync()) } catch (e) { setSyncError(e.message) } finally { setSyncing(false) }
+    if(!from||!to||from>to){setSyncError('Vui lòng chọn khoảng ngày hợp lệ.');return}
+    try {
+      setSyncing(true)
+      setSyncResult(await onSync({from,to}))
+      await onLoadMetrics(from,to)
+    } catch (e) { setSyncError(e.message) } finally { setSyncing(false) }
   }
   const newCustomers=demo?0:reportTotal('customers')
   const newInboxes=demo?0:reportTotal('inboxes')
@@ -710,31 +782,31 @@ function ChannelPage({data,demo,onConnect,onSync,onMap,onUnmap}) {
   const comments=demo?0:reportTotal('comments')
   const interactions=demo?0:reportTotal('reactions')
   return <div>
-    <PageHeading eyebrow="HIỆU SUẤT KÊNH" title="Chỉ số kênh" description="Số liệu page và bài đăng theo tháng từ API Pancake." action={isAdmin?<button className="secondary-button" onClick={runSync} disabled={syncing}><Icon name="calendar"/> {syncing?'Đang đồng bộ…':'Đồng bộ Pancake'}</button>:<button className="secondary-button" disabled><Icon name="calendar"/> Tháng {data.currentMonth||'hiện tại'}</button>}/>
+    <PageHeading eyebrow="HIỆU SUẤT KÊNH" title="Chỉ số kênh" description="Số liệu page và bài đăng trong khoảng ngày từ API Pancake." action={<div className="pancake-range-actions"><div className="pancake-range-controls"><label>Từ<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label><span>→</span><label>Đến<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label><button className="secondary-button" onClick={runLoad}>Xem dữ liệu</button></div>{isAdmin&&<button className="primary-button" onClick={runSync} disabled={syncing}><Icon name="calendar"/> {syncing?'Đang đồng bộ…':'Đồng bộ khoảng ngày'}</button>}</div>}/>
     {isAdmin && <section className="panel pancake-panel">
       <div className="panel-heading"><div><span className="eyebrow">TÍCH HỢP PANCAKE</span><h2>{pancake.configured?(pancake.connected+'/'+pancake.configured+' page đã kết nối'):'Chưa kết nối Pancake'}</h2></div><button className="primary-button" onClick={()=>setConnectOpen(true)}>Cập nhật token</button></div>
       <p className="muted pancake-help">{pancake.needs_reconnect?(pancake.needs_reconnect+' page cần kết nối lại. '):''}Gán nhân sự trực tiếp theo page ID; không giới hạn số page mỗi người. “Gỡ gán” chỉ bỏ người phụ trách; kết nối và lịch sử số liệu vẫn được giữ.</p>
       {syncError&&<div className="form-error pancake-sync-result">Đồng bộ thất bại: {syncError}</div>}
-      {syncResult&&<div className="pancake-sync-result" role="status"><b>{syncResult.month}: {syncResult.found} page · {syncResult.synced} nhóm API đã lưu · {syncResult.failed} lỗi</b>{syncResult.errors?.length>0&&<ul>{syncResult.errors.slice(0,8).map((e,i)=><li key={i}>{pancakeUserFacingError(e)}</li>)}</ul>}</div>}
+      {syncResult&&<div className="pancake-sync-result" role="status"><b>{pancakePeriod(syncResult.period||syncResult.month)}: {syncResult.found} page · {syncResult.synced} nhóm API đã lưu · {syncResult.failed} lỗi</b>{syncResult.errors?.length>0&&<ul>{syncResult.errors.slice(0,8).map((e,i)=><li key={i}>{pancakeUserFacingError(e)}</li>)}</ul>}</div>}
       {pancake.pages?.length>0 && <div className="pancake-pages">{pancake.pages.map(page=><PancakePageRow key={page.page_id} page={page} users={data.users||[]} onMap={onMap} onUnmap={onUnmap}/>)}</div>}
     </section>}
     <div className="metric-grid">
       <Metric label="Lượt xem" value={views} delta={views==='—'?'Chưa có trong schema API Pancake':''} color="purple" icon="◉"/>
       <Metric label="Người theo dõi" value={followers} delta={followers==='—'?'Chưa có trong schema API Pancake':''} color="green" icon="♙"/>
-      <Metric label="Video đã đăng" value={hasPosts||demo||total('videos')?compactNumber(videos):'—'} delta="Bài có type video" color="orange" icon="▶"/>
+      <Metric label="Video đã đăng" value={videos==='—'?'—':(hasPosts||demo||total('videos')?compactNumber(videos):'—')} delta="Bài có type video" color="orange" icon="▶"/>
       <Metric label="Khách mới" value={hasPageStats||demo?compactNumber(newCustomers):'—'} delta="Thống kê page" color="blue" icon="♙"/>
       <Metric label="Hội thoại mới" value={hasPageStats||demo?compactNumber(newInboxes):'—'} delta="Thống kê page" color="purple" icon="⌁"/>
       <Metric label="Số điện thoại" value={hasPageStats||demo?compactNumber(phoneNumbers):'—'} delta="Thống kê page" color="green" icon="☎"/>
       <Metric label="Bình luận bài đăng" value={hasPosts||demo?compactNumber(comments):'—'} delta="Bài đăng đã lấy" color="orange" icon="☰"/>
-      <Metric label="Lượt cảm xúc" value={hasPosts||demo?compactNumber(interactions):'—'} delta="Reaction trên bài đăng" color="blue" icon="♥"/>
+      <Metric label="Lượt cảm xúc" value={hasPosts||demo?compactNumber(interactions):'—'} delta="Bài đăng đã lấy" color="blue" icon="♥"/>
     </div>
-    {!demo&&<section className="panel pancake-metrics-panel"><div className="pancake-metrics-heading"><div><span className="eyebrow">BÁO CÁO PAGE</span><h2>Số liệu theo từng page</h2><p>{metricPages.length} page · {pancakePeriod(data.currentMonth)}</p></div><span className="pancake-period-badge">{data.currentMonth||'Kỳ hiện tại'}</span></div>{metricPages.length?<><PancakePageComparison pages={metricPages} users={data.users||[]} month={data.currentMonth}/><div className="pancake-metric-pages">{metricPages.map(page=><PancakeMetricsPage key={page.page_id} page={page} users={data.users||[]} month={data.currentMonth}/>)}</div></>:<div className="channel-empty">Chưa có page Pancake để đồng bộ.</div>}<p className="muted channel-note">Lượt xem video và follower không có trong dữ liệu Pancake đã tích hợp; các thống kê còn lại được trình bày theo page và kỳ báo cáo.</p></section>}
+    {!demo&&<section className="panel pancake-metrics-panel"><div className="pancake-metrics-heading"><div><span className="eyebrow">BÁO CÁO PAGE</span><h2>Số liệu theo từng page</h2><p>{metricPages.length} page · {pancakePeriod(period)}</p></div><span className="pancake-period-badge">{pancakePeriod(period)}</span></div>{metricPages.length?<><PancakePageComparison pages={metricPages} users={data.users||[]} period={period}/><div className="pancake-metric-pages">{metricPages.map(page=><PancakeMetricsPage key={page.page_id} page={page} users={data.users||[]} period={period}/>)}</div></>:<div className="channel-empty">Chưa có page Pancake trong khoảng ngày này.</div>}<p className="muted channel-note">Lượt xem video và follower không có trong dữ liệu Pancake đã tích hợp; các thống kê còn lại được trình bày theo page và khoảng ngày đã chọn.</p></section>}
     {!demo && <section className="panel table-panel"><div className="table-toolbar"><h2>Kênh nguồn khác</h2><span>{data.channels?.length||0} kênh</span></div><div className="simple-table channel-mapping-table"><div className="table-head"><span>NHÂN SỰ</span><span>KÊNH</span><span>PAGE ID</span><span>NỀN TẢNG</span><span>VỊ TRÍ</span><span>TRẠNG THÁI</span></div>{(data.channels||[]).map(c=>{const u=data.users?.find(x=>x.email===c.email);return <div className="table-row" key={c.email+'-'+c.slot}><span className="title-cell"><Avatar user={u}/><b>{u?.name||c.email}</b></span><span>{c.page_name||'Đã liên kết'}</span><code className="pancake-page-id">{c.page_id||'—'}</code><span>{c.platform}</span><span>{c.slot===2?'Kênh 2':'Kênh chính'}</span><Status value="Đang hoạt động"/></div>})}</div></section>}
     {connectOpen && <PancakeConnectModal onClose={()=>setConnectOpen(false)} onConnect={onConnect}/>}
   </div>
 }
 
-function PancakeMetricsPage({page,users,month}) {
+function PancakeMetricsPage({page,users,period}) {
   const totals=pancakePageReport(page)
   const person=users.find(user=>user.email===page.email)?.name||page.email||'Chưa gán nhân sự'
   const metricErrors=Object.entries(page.errors||{})
@@ -767,14 +839,14 @@ function PancakeMetricsPage({page,users,month}) {
       <span className="pancake-report-updated">{page.last_sync_at?'Cập nhật '+new Date(page.last_sync_at).toLocaleString('vi-VN'):'Chưa đồng bộ'}</span>
     </summary>
     <div className="pancake-report-body">
-      <div className="pancake-report-period">Số liệu từ {pancakePeriod(month)}</div>
+      <div className="pancake-report-period">Số liệu từ {pancakePeriod(period)}</div>
       {metricErrors.length>0&&<div className="pancake-report-warning">Một số thống kê chưa lấy được: {metricErrors.map(([name,error])=>`${({pages:'hoạt động page',pages_campaigns:'chiến dịch',ads_by_id:'quảng cáo',ads_by_time:'quảng cáo theo thời gian',customer_engagements:'tương tác khách hàng',customer_engagements_hourly:'tương tác theo giờ',customer_feedbacks:'đánh giá',tags:'thẻ',users:'nhân viên',posts:'bài đăng'})[name]||'đánh giá'} (${error})`).join(' · ')}.</div>}
       <div className="pancake-report-kpis">{summary.map(item=><div className={`pancake-report-kpi ${item.tone}`} key={item.label}><span>{item.label}</span><b>{item.value}</b><small>Trong kỳ</small></div>)}</div>
       <div className="pancake-report-section-title"><h3>Xu hướng theo tuần</h3><span>Số liệu cộng theo ngày trong kỳ</span></div>
       <div className="pancake-report-trends">
-        <PancakeTrendCard title="Khách hàng mới" values={pancakeWeekBars(totals.pageRows,'new_customer_count',month)} available={totals.hasPageStats}/>
-        <PancakeTrendCard title="Hội thoại mới" values={pancakeWeekBars(totals.pageRows,'new_inbox_count',month)} available={totals.hasPageStats}/>
-        <PancakeTrendCard title="Số điện thoại thu được" values={pancakeWeekBars(totals.pageRows,'phone_number_count',month)} available={totals.hasPageStats}/>
+        <PancakeTrendCard title="Khách hàng mới" values={pancakeWeekBars(totals.pageRows,'new_customer_count',period)} available={totals.hasPageStats}/>
+        <PancakeTrendCard title="Hội thoại mới" values={pancakeWeekBars(totals.pageRows,'new_inbox_count',period)} available={totals.hasPageStats}/>
+        <PancakeTrendCard title="Số điện thoại thu được" values={pancakeWeekBars(totals.pageRows,'phone_number_count',period)} available={totals.hasPageStats}/>
       </div>
       <div className="pancake-report-detail-grid">
         <PancakeReportTable title="Hoạt động page" note="Tổng hợp số liệu trong kỳ" rows={pageRows} columns={[{key:'label',label:'Chỉ số'},{key:'value',label:'Số lượng',render:row=>compactNumber(row.value)}]} empty={page.errors?.pages||'Chưa có số liệu page trong kỳ này.'}/>
@@ -792,11 +864,11 @@ function PancakeMetricsPage({page,users,month}) {
   </details>
 }
 
-function PancakePageComparison({pages,users,month}) {
+function PancakePageComparison({pages,users,period}) {
   if(pages.length<2) return null
   const rows=pages.map(page=>({page,totals:pancakePageReport(page),person:users.find(user=>user.email===page.email)?.name||'Chưa gán'})).sort((a,b)=>b.totals.customers-a.totals.customers)
   return <section className="pancake-page-comparison">
-    <div className="pancake-report-section-title"><h3>So sánh nhanh các page</h3><span>{month||'Kỳ hiện tại'} · cùng một kỳ dữ liệu</span></div>
+    <div className="pancake-report-section-title"><h3>So sánh nhanh các page</h3><span>{pancakePeriod(period)} · cùng một kỳ dữ liệu</span></div>
     <div className="pancake-report-table-scroll"><table><thead><tr><th>PAGE</th><th>KHÁCH MỚI</th><th>HỘI THOẠI MỚI</th><th>SỐ ĐIỆN THOẠI</th><th>VIDEO</th><th>BÌNH LUẬN</th></tr></thead><tbody>{rows.map(({page,totals,person})=><tr key={page.page_id}><td><b>{page.page_name||page.page_id}</b><small className="pancake-cell-subtitle">{person}</small></td><td>{totals.hasPageStats?compactNumber(totals.customers):'—'}</td><td>{totals.hasPageStats?compactNumber(totals.inboxes):'—'}</td><td>{totals.hasPageStats?compactNumber(totals.phones):'—'}</td><td>{totals.hasPosts?compactNumber(totals.videos):'—'}</td><td>{totals.hasPosts?compactNumber(totals.comments):'—'}</td></tr>)}</tbody></table></div>
   </section>
 }

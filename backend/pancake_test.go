@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParsePancakePages(t *testing.T) {
@@ -375,5 +376,28 @@ func TestPancakeSyncMarksUnreadablePageTokenForReconnect(t *testing.T) {
 	}
 	if status != "needs_reconnect" || !strings.Contains(lastError, "Cập nhật token") {
 		t.Fatalf("status=%q error=%q", status, lastError)
+	}
+}
+
+func TestPancakeDateRangeClipsFutureEndAndBuildsStableKey(t *testing.T) {
+	now := time.Date(2026, 9, 16, 12, 0, 0, 0, pancakeLocation)
+	start, end, err := pancakeDateRange("2026-09-01", "2026-09-30", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pancakeRangeKey(start, end); got != "2026-09-01..2026-09-16" {
+		t.Fatalf("range key = %q", got)
+	}
+	if got := pancakeFullMonth("2026-08-01", "2026-08-31"); got != "2026-08" {
+		t.Fatalf("full month = %q", got)
+	}
+	if end.Day() != 16 || end.Hour() != 12 {
+		t.Fatalf("end = %s", end)
+	}
+	if _, _, err := pancakeDateRange("2026-09-17", "2026-09-18", now); err == nil {
+		t.Fatal("future range should be rejected")
+	}
+	if _, _, err := pancakeDateRange("2026-09-10", "2026-09-01", now); err == nil {
+		t.Fatal("reversed range should be rejected")
 	}
 }

@@ -377,8 +377,27 @@ func (a *api) computePayroll(w http.ResponseWriter, r *http.Request, me user) {
 		for key := range values {
 			allowed[key] = true
 		}
-		break
 	}
+	policyKeys, err := tx.QueryContext(ctx, "SELECT DISTINCT input_key FROM policies WHERE active=1 AND input_key<>''")
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	for policyKeys.Next() {
+		var key string
+		if err = policyKeys.Scan(&key); err != nil {
+			policyKeys.Close()
+			fail(w, err)
+			return
+		}
+		allowed[key] = true
+	}
+	if err = policyKeys.Err(); err != nil {
+		policyKeys.Close()
+		fail(w, err)
+		return
+	}
+	policyKeys.Close()
 	auto, err := buildAutoInputs(ctx, tx, req.Month, allowed)
 	if err != nil {
 		fail(w, err)
@@ -401,6 +420,28 @@ func (a *api) computePayroll(w http.ResponseWriter, r *http.Request, me user) {
 			}
 		}
 	}
+	policyUsers, err := tx.QueryContext(ctx, `SELECT DISTINCT email FROM policies WHERE active=1 AND email<>''`)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	for policyUsers.Next() {
+		var email string
+		if err = policyUsers.Scan(&email); err != nil {
+			policyUsers.Close()
+			fail(w, err)
+			return
+		}
+		if combined[strings.ToLower(email)] == nil {
+			combined[strings.ToLower(email)] = map[string]any{}
+		}
+	}
+	if err = policyUsers.Err(); err != nil {
+		policyUsers.Close()
+		fail(w, err)
+		return
+	}
+	policyUsers.Close()
 	if len(combined) == 0 {
 		writeError(w, http.StatusNotFound, "Không có dữ liệu đầu vào cho tháng này")
 		return
@@ -457,4 +498,135 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(month,email) DO UPDATE SET base=
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"month": req.Month, "computed": len(emails)})
+}
+
+type payrollPolicyView struct {
+	ID       int     `json:"id"`
+	Email    string  `json:"email"`
+	UserName string  `json:"user_name"`
+	Code     string  `json:"code"`
+	Label    string  `json:"label"`
+	Type     string  `json:"type"`
+	InputKey string  `json:"input_key"`
+	Rate     float64 `json:"rate"`
+	Tiers    string  `json:"tiers"`
+	Minimum  float64 `json:"minimum"`
+	Note     string  `json:"note"`
+	Active   bool    `json:"active"`
+}
+
+var payrollPolicyTypes = map[string]bool{
+	"fixed": true, "per_unit": true, "per_unit_tenure": true,
+	"tier": true, "percent": true, "penalty_below": true, "penalty_per_unit": true,
+}
+
+func (a *api) payrollPolicies(w http.ResponseWriter, r *http.Request, me user) {
+	if !require(w, me, "payroll.compute") {
+		return
+	}
+	rows, err := a.db.QueryContext(r.Context(), `SELECT p.id,p.email,coalesce(u.name,''),p.code,p.label,p.type,p.input_key,p.rate,p.tiers,p.minimum,p.note,p.active
+		FROM policies p LEFT JOIN users u ON lower(u.email)=lower(p.email) ORDER BY u.name,p.email,p.id`)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer rows.Close()
+	out := []payrollPolicyView{}
+	for rows.Next() {
+		var p payrollPolicyView
+		if err := rows.Scan(&p.ID, &p.Email, &p.UserName, &p.Code, &p.Label, &p.Type, &p.InputKey, &p.Rate, &p.Tiers, &p.Minimum, &p.Note, &p.Active); err != nil {
+			fail(w, err)
+			return
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"policies": out})
+}
+
+func decodePayrollPolicy(r *http.Request) (payrollPolicyView, error) {
+	var p payrollPolicyView
+	if err := decode(r, &p); err != nil {
+		return p, err
+	}
+	p.Email = strings.ToLower(strings.TrimSpace(p.Email))
+	p.Code = strings.TrimSpace(p.Code)
+	p.Label = strings.TrimSpace(p.Label)
+	p.Type = strings.TrimSpace(p.Type)
+	p.InputKey = strings.TrimSpace(p.InputKey)
+	p.Tiers = strings.TrimSpace(p.Tiers)
+	p.Note = strings.TrimSpace(p.Note)
+	if p.Email == "" || p.Code == "" || p.Label == "" || !payrollPolicyTypes[p.Type] {
+		return p, fmt.Errorf("invalid payroll policy")
+	}
+	if p.Type != "fixed" && p.InputKey == "" {
+		return p, fmt.Errorf("missing input key")
+	}
+	if len(p.Code) > 80 || len(p.Label) > 200 || len(p.InputKey) > 80 || len(p.Tiers) > 2000 || len(p.Note) > 500 {
+		return p, fmt.Errorf("payroll policy too long")
+	}
+	if math.IsNaN(p.Rate) || math.IsInf(p.Rate, 0) || math.IsNaN(p.Minimum) || math.IsInf(p.Minimum, 0) || p.Rate < 0 || p.Minimum < 0 {
+		return p, fmt.Errorf("invalid payroll numbers")
+	}
+	return p, nil
+}
+
+func (a *api) savePayrollPolicy(w http.ResponseWriter, r *http.Request, me user, id int) {
+	if !require(w, me, "payroll.compute") {
+		return
+	}
+	p, err := decodePayrollPolicy(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Công thức lương không hợp lệ")
+		return
+	}
+	var active int
+	if p.Active {
+		active = 1
+	}
+	var userExists int
+	if err := a.db.QueryRowContext(r.Context(), "SELECT count(*) FROM users WHERE lower(email)=lower(?) AND active=1", p.Email).Scan(&userExists); err != nil {
+		fail(w, err)
+		return
+	}
+	if userExists == 0 {
+		writeError(w, http.StatusBadRequest, "Nhân sự không hợp lệ")
+		return
+	}
+	if id == 0 {
+		result, err := a.db.ExecContext(r.Context(), `INSERT INTO policies(email,code,label,type,input_key,rate,tiers,minimum,note,active) VALUES(?,?,?,?,?,?,?,?,?,?)`, p.Email, p.Code, p.Label, p.Type, p.InputKey, p.Rate, p.Tiers, p.Minimum, p.Note, active)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		id64, _ := result.LastInsertId()
+		writeJSON(w, http.StatusCreated, map[string]any{"id": id64})
+		return
+	}
+	result, err := a.db.ExecContext(r.Context(), `UPDATE policies SET email=?,code=?,label=?,type=?,input_key=?,rate=?,tiers=?,minimum=?,note=?,active=? WHERE id=?`, p.Email, p.Code, p.Label, p.Type, p.InputKey, p.Rate, p.Tiers, p.Minimum, p.Note, active, id)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		writeError(w, http.StatusNotFound, "Không tìm thấy công thức")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id})
+}
+
+func (a *api) createPayrollPolicy(w http.ResponseWriter, r *http.Request, me user) {
+	a.savePayrollPolicy(w, r, me, 0)
+}
+
+func (a *api) updatePayrollPolicy(w http.ResponseWriter, r *http.Request, me user) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "Mã công thức không hợp lệ")
+		return
+	}
+	a.savePayrollPolicy(w, r, me, id)
 }

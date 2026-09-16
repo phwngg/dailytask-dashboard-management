@@ -641,7 +641,10 @@ type mappedPancakePage struct {
 }
 
 type pancakeSyncResult struct {
-	Month  string   `json:"month"`
+	Month  string   `json:"month,omitempty"`
+	Period string   `json:"period,omitempty"`
+	From   string   `json:"from,omitempty"`
+	To     string   `json:"to,omitempty"`
 	Found  int      `json:"found"`
 	Synced int      `json:"synced"`
 	Failed int      `json:"failed"`
@@ -747,15 +750,119 @@ func pancakeMetricRequests(start, end time.Time) []pancakeMetricRequest {
 	return requests
 }
 
+func pancakeRangeKey(start, end time.Time) string {
+	return start.In(pancakeLocation).Format("2006-01-02") + ".." + end.In(pancakeLocation).Format("2006-01-02")
+}
+
+func pancakeFullMonth(from, to string) string {
+	start, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(from), pancakeLocation)
+	if err != nil || start.Day() != 1 {
+		return ""
+	}
+	end, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(to), pancakeLocation)
+	if err != nil || !end.AddDate(0, 0, 1).Equal(start.AddDate(0, 1, 0)) {
+		return ""
+	}
+	return start.Format("2006-01")
+}
+
+func pancakeDateRange(from, to string, now time.Time) (time.Time, time.Time, error) {
+	start, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(from), pancakeLocation)
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("Ngày bắt đầu không hợp lệ")
+	}
+	endDate, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(to), pancakeLocation)
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("Ngày kết thúc không hợp lệ")
+	}
+	if start.After(endDate) {
+		return time.Time{}, time.Time{}, errors.New("Ngày bắt đầu phải trước hoặc bằng ngày kết thúc")
+	}
+	now = now.In(pancakeLocation)
+	if start.After(now) {
+		return time.Time{}, time.Time{}, errors.New("không thể đồng bộ khoảng ngày chưa đến")
+	}
+	end := endDate.AddDate(0, 0, 1).Add(-time.Second)
+	if end.After(now) {
+		end = now
+	}
+	return start, end, nil
+}
+
+func (a *api) pancakeMetricsAPI(w http.ResponseWriter, r *http.Request, me user) {
+	if !require(w, me, "channel.view") {
+		return
+	}
+	from, to := strings.TrimSpace(r.URL.Query().Get("from")), strings.TrimSpace(r.URL.Query().Get("to"))
+	period := strings.TrimSpace(r.URL.Query().Get("period"))
+	if from != "" || to != "" {
+		if month := pancakeFullMonth(from, to); month != "" {
+			start, end, err := pancakeMonthRange(month, time.Now())
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			period = month
+			from = start.In(pancakeLocation).Format("2006-01-02")
+			to = end.In(pancakeLocation).Format("2006-01-02")
+		} else {
+			start, end, err := pancakeDateRange(from, to, time.Now())
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			period = pancakeRangeKey(start, end)
+			from = start.In(pancakeLocation).Format("2006-01-02")
+			to = end.In(pancakeLocation).Format("2006-01-02")
+		}
+	}
+	if period == "" {
+		period = pancakeCurrentMonth()
+	}
+	metrics, err := a.pancakeMetrics(r.Context(), period)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"period": period, "from": from, "to": to, "metrics": metrics})
+}
+
 func (a *api) pancakeSync(w http.ResponseWriter, r *http.Request, me user) {
 	if !require(w, me, "channel.sync") {
 		return
 	}
 	var req struct {
 		Month string `json:"month"`
+		From  string `json:"from"`
+		To    string `json:"to"`
 	}
 	if r.Body != nil && r.Body != http.NoBody {
 		_ = decode(r, &req)
+	}
+	if strings.TrimSpace(req.From) != "" || strings.TrimSpace(req.To) != "" {
+		if month := pancakeFullMonth(req.From, req.To); month != "" {
+			result, err := a.syncPancake(r.Context(), month)
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, result)
+			return
+		}
+		start, end, err := pancakeDateRange(req.From, req.To, time.Now())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		result, err := a.syncPancakeRange(r.Context(), pancakeRangeKey(start, end), start, end, false)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		result.From = start.In(pancakeLocation).Format("2006-01-02")
+		result.To = end.In(pancakeLocation).Format("2006-01-02")
+		writeJSON(w, http.StatusOK, result)
+		return
 	}
 	month := strings.TrimSpace(req.Month)
 	if month == "" {
@@ -774,10 +881,19 @@ func (a *api) pancakeSync(w http.ResponseWriter, r *http.Request, me user) {
 }
 
 func (a *api) syncPancake(ctx context.Context, month string) (pancakeSyncResult, error) {
+	start, end, err := pancakeMonthRange(month, time.Now())
+	if err != nil {
+		return pancakeSyncResult{Month: month, Period: month}, err
+	}
+	return a.syncPancakeRange(ctx, month, start, end, true)
+}
+
+func (a *api) syncPancakeRange(ctx context.Context, period string, start, end time.Time, updateChannelStats bool) (pancakeSyncResult, error) {
 	pancakeSyncMu.Lock()
 	defer pancakeSyncMu.Unlock()
 
-	result := pancakeSyncResult{Month: month}
+	result := pancakeSyncResult{Month: period, Period: period,
+		From: start.In(pancakeLocation).Format("2006-01-02"), To: end.In(pancakeLocation).Format("2006-01-02")}
 	rows, err := a.db.QueryContext(ctx, `SELECT a.email,p.page_id,p.page_access_token_enc
 		FROM pancake_page_assignments a JOIN pancake_pages p ON p.page_id=a.page_id
 		ORDER BY a.email,p.page_id`)
@@ -800,10 +916,6 @@ func (a *api) syncPancake(ctx context.Context, month string) (pancakeSyncResult,
 	rows.Close()
 	result.Found = len(pages)
 
-	start, end, err := pancakeMonthRange(month, time.Now())
-	if err != nil {
-		return result, err
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	videoCounts := map[string]int{}
 	for _, page := range pages {
@@ -836,7 +948,7 @@ func (a *api) syncPancake(ctx context.Context, month string) (pancakeSyncResult,
 					authFailed = true
 				}
 			}
-			if err := a.savePancakeMetric(ctx, page.PageID, month, request.Name, payload, err, now); err != nil {
+			if err := a.savePancakeMetric(ctx, page.PageID, period, request.Name, payload, err, now); err != nil {
 				return result, err
 			}
 			if err != nil {
@@ -857,14 +969,17 @@ func (a *api) syncPancake(ctx context.Context, month string) (pancakeSyncResult,
 		}
 	}
 
+	if !updateChannelStats {
+		return result, nil
+	}
 	if _, err := a.db.ExecContext(ctx, `UPDATE channel_stats SET videos=0,synced_at=?,source='pancake'
-		WHERE month=? AND slot=1 AND source='pancake'`, now, month); err != nil {
+		WHERE month=? AND slot=1 AND source='pancake'`, now, period); err != nil {
 		return result, err
 	}
 	for email, videos := range videoCounts {
 		if _, err := a.db.ExecContext(ctx, `INSERT INTO channel_stats(month,email,slot,videos,views,followers,synced_at,source)
 			VALUES(?,?,1,?,0,0,?,'pancake') ON CONFLICT(month,email,slot)
-			DO UPDATE SET videos=excluded.videos,synced_at=excluded.synced_at,source='pancake'`, month, email, videos, now); err != nil {
+			DO UPDATE SET videos=excluded.videos,synced_at=excluded.synced_at,source='pancake'`, period, email, videos, now); err != nil {
 			return result, err
 		}
 	}
