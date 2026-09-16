@@ -169,11 +169,20 @@ function App() {
     } catch (e) { setError(e.message); throw e }
   }
 
+  const updatePancakeAssignment = (pageID, email) => setData(current => {
+    if (!current) return current
+    return {
+      ...current,
+      pancake: {...current.pancake, pages:(current.pancake?.pages||[]).map(page=>page.page_id===pageID?{...page,assigned_email:email,mapped:Boolean(email)}:page)},
+      pancakeMetrics:(current.pancakeMetrics||[]).map(page=>page.page_id===pageID?{...page,email}:page),
+    }
+  })
+
   const mapPancakeChannel = async form => {
     setError('')
     try {
       const result = await request('/admin/channels', { method:'PUT', body:JSON.stringify(form) })
-      await load()
+      updatePancakeAssignment(result.page_id,result.email)
       return result
     } catch (e) { setError(e.message); throw e }
   }
@@ -182,7 +191,7 @@ function App() {
     setError('')
     try {
       const result = await request('/admin/pancake/pages/'+encodeURIComponent(pageID)+'/assignment', { method:'DELETE' })
-      await load()
+      updatePancakeAssignment(result.page_id,'')
       return result
     } catch (e) { setError(e.message); throw e }
   }
@@ -704,9 +713,9 @@ function ChannelPage({data,demo,onConnect,onSync,onMap,onUnmap}) {
     <PageHeading eyebrow="HIỆU SUẤT KÊNH" title="Chỉ số kênh" description="Số liệu page và bài đăng theo tháng từ API Pancake." action={isAdmin?<button className="secondary-button" onClick={runSync} disabled={syncing}><Icon name="calendar"/> {syncing?'Đang đồng bộ…':'Đồng bộ Pancake'}</button>:<button className="secondary-button" disabled><Icon name="calendar"/> Tháng {data.currentMonth||'hiện tại'}</button>}/>
     {isAdmin && <section className="panel pancake-panel">
       <div className="panel-heading"><div><span className="eyebrow">TÍCH HỢP PANCAKE</span><h2>{pancake.configured?(pancake.connected+'/'+pancake.configured+' page đã kết nối'):'Chưa kết nối Pancake'}</h2></div><button className="primary-button" onClick={()=>setConnectOpen(true)}>Cập nhật token</button></div>
-      <p className="muted pancake-help">{pancake.needs_reconnect?(pancake.needs_reconnect+' page cần kết nối lại. '):''}Gán nhân sự trực tiếp theo page ID; không giới hạn số page mỗi người. “Gỡ gán” chỉ bỏ người phụ trách, token và lịch sử số liệu vẫn được giữ.</p>
+      <p className="muted pancake-help">{pancake.needs_reconnect?(pancake.needs_reconnect+' page cần kết nối lại. '):''}Gán nhân sự trực tiếp theo page ID; không giới hạn số page mỗi người. “Gỡ gán” chỉ bỏ người phụ trách; kết nối và lịch sử số liệu vẫn được giữ.</p>
       {syncError&&<div className="form-error pancake-sync-result">Đồng bộ thất bại: {syncError}</div>}
-      {syncResult&&<div className="pancake-sync-result" role="status"><b>{syncResult.month}: {syncResult.found} page · {syncResult.synced} nhóm API đã lưu · {syncResult.failed} lỗi</b>{syncResult.errors?.length>0&&<ul>{syncResult.errors.slice(0,8).map((e,i)=><li key={i}>{e}</li>)}</ul>}</div>}
+      {syncResult&&<div className="pancake-sync-result" role="status"><b>{syncResult.month}: {syncResult.found} page · {syncResult.synced} nhóm API đã lưu · {syncResult.failed} lỗi</b>{syncResult.errors?.length>0&&<ul>{syncResult.errors.slice(0,8).map((e,i)=><li key={i}>{pancakeUserFacingError(e)}</li>)}</ul>}</div>}
       {pancake.pages?.length>0 && <div className="pancake-pages">{pancake.pages.map(page=><PancakePageRow key={page.page_id} page={page} users={data.users||[]} onMap={onMap} onUnmap={onUnmap}/>)}</div>}
     </section>}
     <div className="metric-grid">
@@ -792,6 +801,21 @@ function PancakePageComparison({pages,users,month}) {
   </section>
 }
 
+function PancakeConnectionStatus({status}) {
+  const states={
+    connected:['connected','Đã kết nối'],
+    needs_reconnect:['reconnect','Cần kết nối lại'],
+    not_visible:['unavailable','Không còn thấy'],
+    error:['error','Lỗi kết nối'],
+  }
+  const [tone,label]=states[status]||states.error
+  return <span className={`pancake-connection-status ${tone}`}><i/>{label}</span>
+}
+
+function pancakeUserFacingError(message) {
+  return /page access token/i.test(message||'')?'Token đã lưu không dùng được. Bấm “Cập nhật token” để cấp lại tự động.':message
+}
+
 function PancakeConnectModal({onClose,onConnect}) {
   const [token,setToken]=useState('')
   const [busy,setBusy]=useState(false)
@@ -804,25 +828,69 @@ function PancakeConnectModal({onClose,onConnect}) {
     try { setResult(await onConnect(token)); setToken('') } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
   const summary=result?.summary
-  return <Modal title="Kết nối Pancake" onClose={onClose}><form className="modal-form" onSubmit={submit}><label>User Access Token<input type="password" autoComplete="off" value={token} onChange={e=>setToken(e.target.value)} placeholder="Dán token từ Pancake" required/></label><p className="form-help">Token chỉ gửi tới backend qua phiên đăng nhập. Backend không trả lại hoặc hiển thị token.</p>{error&&<div className="form-error">{error}</div>}{summary&&<div className="connect-result"><b>{summary.found} page tìm thấy</b><span>{summary.reused} giữ nguyên · {summary.created} tạo mới · {summary.refreshed} cấp lại · {summary.not_visible} không còn thấy</span>{result.status?.pages?.map(page=><div className="pancake-result-row" key={page.page_id}><code>{page.page_id}</code><span>{page.page_name||'Page không tên'}</span><Status value={page.status==='connected'?'Đã kết nối':page.status==='needs_reconnect'?'Cần kết nối lại':'Không hiển thị'}/></div>)}</div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Đóng</button><button className="primary-button" disabled={busy}>{busy?'Đang kiểm tra…':'Lấy page ID & kết nối'}</button></div></form></Modal>
+  return <Modal title="Kết nối Pancake" onClose={onClose}>
+    <form className="modal-form" onSubmit={submit}>
+      <label>User Access Token<input type="password" autoComplete="off" value={token} onChange={e=>setToken(e.target.value)} placeholder="Dán User Access Token" required/></label>
+      <div className="pancake-token-guide">
+        <b>Cách lấy token trong Pancake</b>
+        <ol><li>Đăng nhập vào Pancake.</li><li>Mở <b>Tài khoản → Cài đặt cá nhân</b>.</li><li>Sao chép mục <b>API Access Token</b> rồi dán vào ô phía trên.</li></ol>
+        <p>Chỉ cần User Access Token. DailyTask sẽ tự kết nối các page và bảo vệ thông tin xác thực của từng page.</p>
+        <a href="https://developer.pancake.biz/" target="_blank" rel="noreferrer">Xem tài liệu Pancake</a>
+      </div>
+      {error&&<div className="form-error">{pancakeUserFacingError(error)}</div>}
+      {summary&&<div className="connect-result"><b>{summary.found} page tìm thấy</b><span>{summary.reused} giữ nguyên · {summary.created} tạo mới · {summary.refreshed} cấp lại · {summary.not_visible} không còn thấy</span>{result.status?.pages?.map(page=><div className="pancake-result-row" key={page.page_id}><code>{page.page_id}</code><span>{page.page_name||'Page không tên'}</span><PancakeConnectionStatus status={page.status}/></div>)}</div>}
+      <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Đóng</button><button className="primary-button" disabled={busy}>{busy?'Đang kiểm tra…':'Lấy page ID & kết nối'}</button></div>
+    </form>
+  </Modal>
 }
 
 function PancakePageRow({page,users,onMap,onUnmap}) {
-  const [email,setEmail]=useState(page.assigned_email||users[0]?.email||'')
+  const [email,setEmail]=useState(page.assigned_email||'')
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
-  useEffect(()=>setEmail(page.assigned_email||users[0]?.email||''),[page.assigned_email,users])
-  const map=async()=>{
+  const actionsMenu=useRef(null)
+  useEffect(()=>setEmail(page.assigned_email||''),[page.assigned_email])
+  const map=async(nextEmail=email,force=false)=>{
+    if(!nextEmail||(!force&&nextEmail===(page.assigned_email||''))) return
     setError('')
     setBusy(true)
-    try { await onMap({page_id:page.page_id,page_name:page.page_name,email}) } catch (e) { setError(e.message) } finally { setBusy(false) }
+    try { await onMap({page_id:page.page_id,page_name:page.page_name,email:nextEmail}) }
+    catch (e) { setError(e.message); setEmail(page.assigned_email||'') }
+    finally { setBusy(false) }
   }
   const unmap=async()=>{
     setError('')
     setBusy(true)
     try { await onUnmap(page.page_id) } catch (e) { setError(e.message) } finally { setBusy(false) }
   }
-  return <div className="pancake-page-row"><div className="pancake-page-copy"><code>{page.page_id}</code><b>{page.page_name||'Page không tên'}</b><small>{page.platform||'pancake'}{page.last_sync_at?' · '+new Date(page.last_sync_at).toLocaleString('vi-VN'):''}</small></div><Status value={page.status==='connected'?'Đã kết nối':page.status==='needs_reconnect'?'Cần kết nối lại':page.status==='not_visible'?'Không còn thấy':'Lỗi'}/><div className="pancake-page-actions"><select aria-label={'Nhân sự cho '+page.page_id} value={email} onChange={e=>setEmail(e.target.value)}>{users.map(user=><option key={user.email} value={user.email}>{user.name}</option>)}</select><button className="secondary-button" onClick={map} disabled={busy||!email}>{busy?'Đang lưu…':page.mapped?'Cập nhật':'Gán kênh'}</button>{page.mapped&&<button className="secondary-button danger" title="Bỏ người phụ trách, giữ kết nối và số liệu Pancake" onClick={unmap} disabled={busy}>Gỡ gán</button>}</div>{page.metric_error_count>0&&<small className="pancake-row-error">{page.metric_error_count} endpoint lỗi — xem chi tiết bên dưới</small>}{page.last_error&&<small className="pancake-row-error">{page.last_error}</small>}{error&&<small className="pancake-row-error">{error}</small>}</div>
+  const chooseUser=e=>{
+    const nextEmail=e.target.value
+    setEmail(nextEmail)
+    if(nextEmail) void map(nextEmail)
+  }
+  const closeMenu=()=>{if(actionsMenu.current) actionsMenu.current.open=false}
+  const lastError=pancakeUserFacingError(page.last_error)
+  return <div className="pancake-page-row">
+    <div className="pancake-page-copy"><code>{page.page_id}</code><b>{page.page_name||'Page không tên'}</b><small>{page.platform||'pancake'}{page.last_sync_at?' · '+new Date(page.last_sync_at).toLocaleString('vi-VN'):''}</small></div>
+    <PancakeConnectionStatus status={page.status}/>
+    <div className="pancake-page-actions">
+      <select aria-label={'Nhân sự phụ trách '+page.page_id} value={email} onChange={chooseUser} disabled={busy}>
+        <option value="" disabled={page.mapped}>Chọn người phụ trách</option>
+        {users.map(user=><option key={user.email} value={user.email}>{user.name}</option>)}
+      </select>
+      <details className="pancake-row-menu" ref={actionsMenu}>
+        <summary aria-label={'Thao tác với '+(page.page_name||page.page_id)}><Icon name="more"/></summary>
+        <div className="pancake-row-menu-items">
+          <button type="button" onClick={()=>{closeMenu();void map(email,true)}} disabled={busy||!email}>Cập nhật</button>
+          {page.mapped&&<button type="button" className="danger" onClick={()=>{closeMenu();void unmap()}} disabled={busy}>Gỡ gán</button>}
+        </div>
+      </details>
+    </div>
+    {busy&&<small className="pancake-row-feedback saving" role="status">Đang lưu người phụ trách…</small>}
+    {page.metric_error_count>0&&<small className="pancake-row-feedback">{page.metric_error_count} nhóm thống kê chưa lấy được — xem báo cáo bên dưới.</small>}
+    {lastError&&<small className="pancake-row-feedback error">{lastError}</small>}
+    {error&&<small className="pancake-row-feedback error">{pancakeUserFacingError(error)}</small>}
+  </div>
 }
 
 function CalendarPage({data}) {
