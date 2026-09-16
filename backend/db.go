@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS pancake_metric_snapshots (
   synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, error TEXT NOT NULL DEFAULT '',
   PRIMARY KEY(page_id,month,endpoint)
 );
+CREATE INDEX IF NOT EXISTS pancake_snapshots_month_page_endpoint ON pancake_metric_snapshots(month,page_id,endpoint);
 `
 
 func openDB(path, adminEmail, adminPassword string) (*sql.DB, error) {
