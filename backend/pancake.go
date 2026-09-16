@@ -795,9 +795,11 @@ func (a *api) pancakeMetricsAPI(w http.ResponseWriter, r *http.Request, me user)
 	}
 	from, to := strings.TrimSpace(r.URL.Query().Get("from")), strings.TrimSpace(r.URL.Query().Get("to"))
 	period := strings.TrimSpace(r.URL.Query().Get("period"))
+	var start, end time.Time
 	if from != "" || to != "" {
 		if month := pancakeFullMonth(from, to); month != "" {
-			start, end, err := pancakeMonthRange(month, time.Now())
+			var err error
+			start, end, err = pancakeMonthRange(month, time.Now())
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
@@ -806,7 +808,8 @@ func (a *api) pancakeMetricsAPI(w http.ResponseWriter, r *http.Request, me user)
 			from = start.In(pancakeLocation).Format("2006-01-02")
 			to = end.In(pancakeLocation).Format("2006-01-02")
 		} else {
-			start, end, err := pancakeDateRange(from, to, time.Now())
+			var err error
+			start, end, err = pancakeDateRange(from, to, time.Now())
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
@@ -824,7 +827,24 @@ func (a *api) pancakeMetricsAPI(w http.ResponseWriter, r *http.Request, me user)
 		fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"period": period, "from": from, "to": to, "metrics": metrics})
+	previous := []pancakePageMetrics{}
+	previousPeriod := ""
+	if !start.IsZero() && !end.IsZero() {
+		days := int(end.In(pancakeLocation).Truncate(24*time.Hour).Sub(start.In(pancakeLocation).Truncate(24*time.Hour)).Hours()/24) + 1
+		previousEnd := start.AddDate(0, 0, -1)
+		previousStart := previousEnd.AddDate(0, 0, -(days - 1))
+		if month := pancakeFullMonth(from, to); month != "" {
+			previousPeriod = previousStart.Format("2006-01")
+		} else {
+			previousPeriod = pancakeRangeKey(previousStart, previousEnd)
+		}
+		previous, err = a.pancakeMetrics(r.Context(), previousPeriod)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"period": period, "from": from, "to": to, "metrics": metrics, "previousPeriod": previousPeriod, "previousMetrics": previous})
 }
 
 func (a *api) pancakeSync(w http.ResponseWriter, r *http.Request, me user) {
