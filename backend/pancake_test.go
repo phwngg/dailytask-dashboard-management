@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -50,6 +52,38 @@ type pancakeRoundTrip func(*http.Request) (*http.Response, error)
 
 func (f pancakeRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
+}
+
+func TestPancakePageTokenKeyPersistsAndMigratesConfiguredKey(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dailytask.db")
+	first, err := loadPancakePageTokenKey("", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := loadPancakePageTokenKey("", dbPath)
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("key did not persist: err=%v", err)
+	}
+	info, err := os.Stat(filepath.Join(filepath.Dir(dbPath), "pancake.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("key file permissions = %o, want 600", info.Mode().Perm())
+	}
+
+	legacyPath := filepath.Join(t.TempDir(), "dailytask.db")
+	legacyKey, err := loadPancakePageTokenKey("legacy-config-key", legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(legacyKey, pancakePageTokenKey("legacy-config-key")) {
+		t.Fatal("configured key was not preserved")
+	}
+	migrated, err := loadPancakePageTokenKey("", legacyPath)
+	if err != nil || !bytes.Equal(legacyKey, migrated) {
+		t.Fatalf("configured key was not persisted for later deploys: err=%v", err)
+	}
 }
 
 func TestPancakeConnectReusesPageTokensByID(t *testing.T) {

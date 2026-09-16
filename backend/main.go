@@ -18,11 +18,15 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
+	pancakeKey, err := loadPancakePageTokenKey(os.Getenv("PANCAKE_ENCRYPTION_KEY"), path)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	app := &api{
 		db:           db,
 		cookieSecure: strings.EqualFold(os.Getenv("COOKIE_SECURE"), "true"),
-		pancakeKey:   pancakePageTokenKey(os.Getenv("PANCAKE_ENCRYPTION_KEY")),
+		pancakeKey:   pancakeKey,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", app.health)

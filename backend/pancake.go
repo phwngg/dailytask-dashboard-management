@@ -15,6 +15,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -220,9 +222,55 @@ func pancakePageTokenKey(raw string) []byte {
 	return sum[:]
 }
 
+func loadPancakePageTokenKey(configured, databasePath string) ([]byte, error) {
+	path := filepath.Join(filepath.Dir(databasePath), "pancake.key")
+	key, err := os.ReadFile(path)
+	if err == nil {
+		if len(key) != 32 {
+			return nil, errors.New("khóa Pancake lưu trên server không hợp lệ")
+		}
+		return key, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	key = pancakePageTokenKey(configured)
+	if len(key) == 0 {
+		key = make([]byte, 32)
+		if _, err = rand.Read(key); err != nil {
+			return nil, err
+		}
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if errors.Is(err, os.ErrExist) {
+		key, err = os.ReadFile(path)
+		if err == nil && len(key) != 32 {
+			return nil, errors.New("khóa Pancake lưu trên server không hợp lệ")
+		}
+		return key, err
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err = f.Write(key); err != nil {
+		f.Close()
+		_ = os.Remove(path)
+		return nil, err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		_ = os.Remove(path)
+		return nil, err
+	}
+	if err = f.Close(); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
 func encryptPancakeToken(key []byte, token string) (string, error) {
 	if len(key) == 0 {
-		return "", errors.New("chưa cấu hình PANCAKE_ENCRYPTION_KEY")
+		return "", errors.New("khóa mã hóa Pancake chưa sẵn sàng")
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -242,7 +290,7 @@ func encryptPancakeToken(key []byte, token string) (string, error) {
 
 func decryptPancakeToken(key []byte, encoded string) (string, error) {
 	if len(key) == 0 {
-		return "", errors.New("chưa cấu hình PANCAKE_ENCRYPTION_KEY")
+		return "", errors.New("khóa mã hóa Pancake chưa sẵn sàng")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
