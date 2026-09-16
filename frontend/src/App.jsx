@@ -682,22 +682,24 @@ function ChannelPage({data,demo,onConnect,onSync,onMap,onUnmap}) {
   const pancake=data.pancake||{pages:[],configured:0,connected:0,needs_reconnect:0}
   const metricPages=data.pancakeMetrics||[]
   const assignedMetrics=metricPages.filter(page=>page.email)
+  const reports=assignedMetrics.map(pancakePageReport)
   const isAdmin=!demo && Boolean(data.me?.isAdmin||data.me?.caps?.includes('channel.sync'))
   const total=(key)=>stats.reduce((sum,row)=>sum+Number(row[key]||0),0)
-  const hasPosts=assignedMetrics.some(page=>page.metrics?.posts&&!page.errors?.posts)
-  const hasPageStats=assignedMetrics.some(page=>page.metrics?.pages&&!page.errors?.pages)
-  const videos=demo?86:(hasPosts?pancakePostTotal(assignedMetrics,'video'):total('videos'))
+  const reportTotal=key=>reports.reduce((sum,report)=>sum+report[key],0)
+  const hasPosts=reports.some(report=>report.hasPosts)
+  const hasPageStats=reports.some(report=>report.hasPageStats)
+  const videos=demo?86:(hasPosts?reportTotal('videos'):total('videos'))
   const views=demo?compactNumber(2840000):(total('views')?compactNumber(total('views')):'—')
   const followers=demo?compactNumber(12480):(total('followers')?compactNumber(total('followers')):'—')
   const runSync=async()=>{
     setSyncError('')
     try { setSyncing(true); setSyncResult(await onSync()) } catch (e) { setSyncError(e.message) } finally { setSyncing(false) }
   }
-  const newCustomers=demo?0:pancakeSeriesTotal(assignedMetrics,'new_customer_count')
-  const newInboxes=demo?0:pancakeSeriesTotal(assignedMetrics,'new_inbox_count')
-  const phoneNumbers=demo?0:pancakeSeriesTotal(assignedMetrics,'phone_number_count')
-  const comments=demo?0:pancakePostFieldTotal(assignedMetrics,'comment_count')
-  const interactions=demo?0:pancakeReactionTotal(assignedMetrics)
+  const newCustomers=demo?0:reportTotal('customers')
+  const newInboxes=demo?0:reportTotal('inboxes')
+  const phoneNumbers=demo?0:reportTotal('phones')
+  const comments=demo?0:reportTotal('comments')
+  const interactions=demo?0:reportTotal('reactions')
   return <div>
     <PageHeading eyebrow="HIỆU SUẤT KÊNH" title="Chỉ số kênh" description="Số liệu page và bài đăng theo tháng từ API Pancake." action={isAdmin?<button className="secondary-button" onClick={runSync} disabled={syncing}><Icon name="calendar"/> {syncing?'Đang đồng bộ…':'Đồng bộ Pancake'}</button>:<button className="secondary-button" disabled><Icon name="calendar"/> Tháng {data.currentMonth||'hiện tại'}</button>}/>
     {isAdmin && <section className="panel pancake-panel">
