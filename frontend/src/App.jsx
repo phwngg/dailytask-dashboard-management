@@ -519,29 +519,158 @@ function compactNumber(value) {
   return n.toLocaleString('vi-VN')
 }
 
-function pancakeEndpointLabel(name) {
-  return ({
-    pages:'Thống kê page', pages_campaigns:'Chiến dịch quảng cáo', ads_by_id:'Hiệu suất quảng cáo theo quảng cáo', ads_by_time:'Hiệu suất quảng cáo theo thời gian',
-    customer_engagements:'Tương tác khách hàng theo ngày', customer_engagements_hourly:'Tương tác khách hàng theo giờ', customer_feedbacks:'Đánh giá khách hàng',
-    customer_feedbacks_part_1:'Đánh giá khách hàng · phần 1', customer_feedbacks_part_2:'Đánh giá khách hàng · phần 2',
-    tags:'Thống kê theo tag', users:'Hiệu suất nhân sự', posts:'Bài đăng và tương tác',
-  })[name] || name
+function pancakePayloadRows(payload, key='data') {
+  if (Array.isArray(payload)) return payload
+  return Array.isArray(payload?.[key]) ? payload[key] : []
 }
 
-function pancakeSeriesTotal(pages, field) {
-  return pages.reduce((sum,page)=>(page.metrics?.pages?.data||[]).reduce((n,row)=>n+Number(row[field]||0),sum),0)
+function pancakeNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (typeof value !== 'string') return 0
+  let text = value.trim().replace(/[^\d,.-]/g, '')
+  if (!text) return 0
+  if (text.includes(',') && text.includes('.')) {
+    text = text.lastIndexOf(',') > text.lastIndexOf('.') ? text.replace(/\./g, '').replace(',', '.') : text.replace(/,/g, '')
+  } else if (text.includes(',')) {
+    const parts=text.split(',')
+    text=parts.length===2&&parts[1].length===3?parts.join(''):text.replace(',', '.')
+  } else if (text.split('.').length>2) text=text.replace(/\./g,'')
+  const number = Number(text)
+  return Number.isFinite(number) ? number : 0
 }
 
-function pancakePostTotal(pages, type) {
-  return pages.reduce((sum,page)=>sum+((page.metrics?.posts?.posts||[]).filter(post=>!type||post.type===type).length),0)
+function pancakeSum(rows, field) {
+  return rows.reduce((sum,row)=>sum+pancakeNumber(row?.[field]),0)
 }
 
-function pancakePostFieldTotal(pages, field) {
-  return pages.reduce((sum,page)=>(page.metrics?.posts?.posts||[]).reduce((n,post)=>n+Number(post[field]||0),sum),0)
+function pancakePageReport(page) {
+  const metrics=page.metrics||{}
+  const pageRows=pancakePayloadRows(metrics.pages)
+  const posts=pancakePayloadRows(metrics.posts,'posts')
+  const reactions=posts.reduce((sum,post)=>sum+Object.values(post.reactions||{}).reduce((n,value)=>n+pancakeNumber(value),0),0)
+  return {
+    hasPageStats:Boolean(metrics.pages)&&!page.errors?.pages,
+    hasPosts:Boolean(metrics.posts)&&!page.errors?.posts,
+    pageRows,
+    posts,
+    customers:pancakeSum(pageRows,'new_customer_count'),
+    inboxes:pancakeSum(pageRows,'new_inbox_count'),
+    phones:pancakeSum(pageRows,'phone_number_count'),
+    uniquePhones:pancakeSum(pageRows,'uniq_phone_number_count'),
+    videos:posts.filter(post=>String(post.type).toLowerCase()==='video').length,
+    comments:pancakeSum(posts,'comment_count'),
+    reactions,
+  }
 }
 
-function pancakeReactionTotal(pages) {
-  return pages.reduce((sum,page)=>(page.metrics?.posts?.posts||[]).reduce((n,post)=>n+Object.values(post.reactions||{}).reduce((r,v)=>r+Number(v||0),0),sum),0)
+function pancakeWeekBars(rows, field, month) {
+  const [year,monthNumber]=String(month||'').split('-').map(Number)
+  if (!year||!monthNumber) return []
+  const days=new Date(year,monthNumber,0).getDate()
+  const weeks=Array.from({length:Math.ceil(days/7)},(_,i)=>({label:`${i*7+1}–${Math.min(days,(i+1)*7)}`,value:0}))
+  rows.forEach(row=>{
+    const day=Number(String(row.hour||'').match(/^\d{4}-\d{2}-(\d{2})/)?.[1])
+    if(day>0&&day<=days) weeks[Math.floor((day-1)/7)].value+=pancakeNumber(row[field])
+  })
+  return weeks
+}
+
+function pancakeDate(value) {
+  const match=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return match?`${match[3]}/${match[2]}/${match[1]}`:'—'
+}
+
+function pancakePeriod(month) {
+  const [year,monthNumber]=String(month||'').split('-').map(Number)
+  if(!year||!monthNumber) return month||'Kỳ hiện tại'
+  const end=new Date(year,monthNumber,0).getDate()
+  return `01/${String(monthNumber).padStart(2,'0')}/${year} – ${String(end).padStart(2,'0')}/${String(monthNumber).padStart(2,'0')}/${year}`
+}
+
+function pancakeAverageResponse(milliseconds) {
+  const seconds=Math.round(pancakeNumber(milliseconds)/1000)
+  if(!seconds) return '—'
+  if(seconds<60) return `${seconds} giây`
+  const minutes=Math.floor(seconds/60)
+  return `${minutes} phút${seconds%60?` ${seconds%60} giây`:''}`
+}
+
+function pancakeStaffRows(page) {
+  const staff=page.metrics?.users?.data?.users||{}
+  const engagements=page.metrics?.customer_engagements?.users_engagements||[]
+  const byId=new Map(engagements.map(row=>[row.user_id,row]))
+  const ids=new Set([...Object.keys(staff),...engagements.map(row=>row.user_id).filter(Boolean)])
+  return [...ids].map(id=>{
+    const user=staff[id]||{}
+    const engagement=byId.get(id)||{}
+    return {
+      name:user.user_name||engagement.name||'Nhân viên',
+      inbox:pancakeNumber(user.inbox_count??engagement.inbox_count),
+      comments:pancakeNumber(user.comment_count),
+      phones:pancakeNumber(user.phone_number_count),
+      orders:pancakeNumber(engagement.order_count),
+      response:user.average_response_time,
+    }
+  }).sort((a,b)=>(b.inbox+b.comments)-(a.inbox+a.comments))
+}
+
+function pancakeFeedback(page) {
+  const payloads=Object.entries(page.metrics||{}).filter(([name])=>name==='customer_feedbacks'||name.startsWith('customer_feedbacks_part_')).map(([,payload])=>payload||{})
+  const count=payloads.reduce((sum,payload)=>sum+pancakeNumber(payload.feedback_count),0)
+  const ratings=payloads.reduce((all,payload)=>{
+    Object.entries(payload.feedback_rating_counts||{}).forEach(([rating,value])=>all[rating]=(all[rating]||0)+pancakeNumber(value))
+    return all
+  },{})
+  const people=new Map()
+  payloads.flatMap(payload=>payload.customer_average_feedback||[]).forEach(row=>{
+    const key=row.admin_id||row.employee_name||'unknown'
+    const current=people.get(key)||{name:row.employee_name||'Nhân viên',count:0,weighted:0,automatic:0}
+    const amount=pancakeNumber(row.feedback_count)
+    current.count+=amount
+    current.weighted+=pancakeNumber(row.avg_feedback)*amount
+    current.automatic+=pancakeNumber(row.botcake_count)
+    people.set(key,current)
+  })
+  const staff=[...people.values()]
+  const averageCount=staff.reduce((sum,row)=>sum+row.count,0)
+  return {available:payloads.length>0,count,ratings,average:averageCount?staff.reduce((sum,row)=>sum+row.weighted,0)/averageCount:0,hasAverage:averageCount>0,people:staff.map(row=>({...row,average:row.count?row.weighted/row.count:0}))}
+}
+
+function pancakeTagRows(page) {
+  const payload=page.metrics?.tags||{}
+  const series=payload.data?.series||{}
+  return (payload.tags||[]).map(tag=>({
+    name:tag.text||'Thẻ không tên',
+    count:(series[tag.id]||[]).reduce((sum,value)=>sum+pancakeNumber(value),0),
+  })).sort((a,b)=>b.count-a.count)
+}
+
+function pancakeCurrency(value,currency) {
+  const formatted=pancakeNumber(value).toLocaleString('vi-VN',{maximumFractionDigits:0})
+  return currency?`${formatted} ${currency}`:formatted
+}
+
+function pancakeStatusLabel(value) {
+  const status=String(value||'').toLowerCase()
+  if(status==='active') return 'Đang chạy'
+  if(status==='paused') return 'Tạm dừng'
+  if(status==='completed') return 'Đã kết thúc'
+  return value||'—'
+}
+
+function PancakeTrendCard({title,values,available}) {
+  const max=Math.max(1,...values.map(item=>item.value))
+  return <section className="pancake-trend-card">
+    <h4>{title}</h4>
+    {available&&values.length?<div className="pancake-week-bars">{values.map(item=><div className="pancake-week-bar" key={item.label} title={`${item.label}: ${compactNumber(item.value)}`}><span>{compactNumber(item.value)}</span><i style={{height:`${Math.max(item.value?7:3,item.value/max*76)}%`}}/><small>{item.label}</small></div>)}</div>:<p className="pancake-report-empty">Chưa có dữ liệu theo ngày trong kỳ này.</p>}
+  </section>
+}
+
+function PancakeReportTable({title,note,columns,rows,empty='Chưa có dữ liệu trong kỳ này.'}) {
+  return <section className="pancake-report-table">
+    <div className="pancake-report-table-head"><div><h4>{title}</h4>{note&&<small>{note}</small>}</div><span>{rows.length}</span></div>
+    {rows.length?<div className="pancake-report-table-scroll"><table><thead><tr>{columns.map(column=><th key={column.key}>{column.label}</th>)}</tr></thead><tbody>{rows.map((row,index)=><tr key={row.id||row.key||index}>{columns.map(column=><td key={column.key}>{column.render?column.render(row):row[column.key]??'—'}</td>)}</tr>)}</tbody></table></div>:<p className="pancake-report-empty">{empty}</p>}
+  </section>
 }
 
 function ChannelPage({data,demo,onConnect,onSync,onMap,onUnmap}) {
@@ -588,16 +717,77 @@ function ChannelPage({data,demo,onConnect,onSync,onMap,onUnmap}) {
       <Metric label="Bình luận bài đăng" value={hasPosts||demo?compactNumber(comments):'—'} delta="Bài đăng đã lấy" color="orange" icon="☰"/>
       <Metric label="Lượt cảm xúc" value={hasPosts||demo?compactNumber(interactions):'—'} delta="Reaction trên bài đăng" color="blue" icon="♥"/>
     </div>
-    {!demo&&<section className="panel pancake-metrics-panel"><div className="table-toolbar"><h2>Số liệu chi tiết theo page</h2><span>{metricPages.length} page · {data.currentMonth||'tháng hiện tại'}</span></div>{metricPages.length?<div className="pancake-metric-pages">{metricPages.map(page=><PancakeMetricsPage key={page.page_id} page={page} users={data.users||[]}/>)}</div>:<div className="channel-empty">Chưa có page Pancake để đồng bộ.</div>}<p className="muted channel-note">Pancake OpenAPI hiện trả số liệu page, tương tác, tag, nhân sự, feedback, quảng cáo và bài đăng. Lượt xem video/follower không có trong các schema thống kê này; các nhóm số liệu chi tiết được lưu theo page ID.</p></section>}
+    {!demo&&<section className="panel pancake-metrics-panel"><div className="pancake-metrics-heading"><div><span className="eyebrow">BÁO CÁO PAGE</span><h2>Số liệu theo từng page</h2><p>{metricPages.length} page · {pancakePeriod(data.currentMonth)}</p></div><span className="pancake-period-badge">{data.currentMonth||'Kỳ hiện tại'}</span></div>{metricPages.length?<><PancakePageComparison pages={metricPages} users={data.users||[]} month={data.currentMonth}/><div className="pancake-metric-pages">{metricPages.map(page=><PancakeMetricsPage key={page.page_id} page={page} users={data.users||[]} month={data.currentMonth}/>)}</div></>:<div className="channel-empty">Chưa có page Pancake để đồng bộ.</div>}<p className="muted channel-note">Lượt xem video và follower không có trong dữ liệu Pancake đã tích hợp; các thống kê còn lại được trình bày theo page và kỳ báo cáo.</p></section>}
     {!demo && <section className="panel table-panel"><div className="table-toolbar"><h2>Kênh nguồn khác</h2><span>{data.channels?.length||0} kênh</span></div><div className="simple-table channel-mapping-table"><div className="table-head"><span>NHÂN SỰ</span><span>KÊNH</span><span>PAGE ID</span><span>NỀN TẢNG</span><span>VỊ TRÍ</span><span>TRẠNG THÁI</span></div>{(data.channels||[]).map(c=>{const u=data.users?.find(x=>x.email===c.email);return <div className="table-row" key={c.email+'-'+c.slot}><span className="title-cell"><Avatar user={u}/><b>{u?.name||c.email}</b></span><span>{c.page_name||'Đã liên kết'}</span><code className="pancake-page-id">{c.page_id||'—'}</code><span>{c.platform}</span><span>{c.slot===2?'Kênh 2':'Kênh chính'}</span><Status value="Đang hoạt động"/></div>})}</div></section>}
     {connectOpen && <PancakeConnectModal onClose={()=>setConnectOpen(false)} onConnect={onConnect}/>}
   </div>
 }
 
-function PancakeMetricsPage({page,users}) {
-  const endpointNames=Object.keys(page.metrics||{}).sort()
+function PancakeMetricsPage({page,users,month}) {
+  const totals=pancakePageReport(page)
   const person=users.find(user=>user.email===page.email)?.name||page.email||'Chưa gán nhân sự'
-  return <details className="pancake-metric-page"><summary><span><b>{page.page_name||page.page_id}</b><small>{page.platform||'pancake'} · {person} · ID {page.page_id}</small></span><span>{page.last_sync_at?'Đồng bộ '+new Date(page.last_sync_at).toLocaleString('vi-VN'):''}</span></summary><div className="pancake-metric-endpoints">{endpointNames.length?endpointNames.map(name=><details className="pancake-metric-endpoint" key={name}><summary>{pancakeEndpointLabel(name)}{page.errors?.[name]&&<span className="pancake-endpoint-error"> · {page.errors[name]}</span>}</summary><pre>{JSON.stringify(page.metrics[name],null,2)}</pre></details>):<p className="muted">Chưa có dữ liệu; gán page rồi bấm Đồng bộ Pancake.</p>}</div></details>
+  const metricErrors=Object.entries(page.errors||{})
+  const seriesAvailable=Boolean(page.metrics?.customer_engagements)&&!page.errors?.customer_engagements
+  const staffRows=pancakeStaffRows(page)
+  const tags=pancakeTagRows(page)
+  const feedback=pancakeFeedback(page)
+  const adRows=pancakePayloadRows(page.metrics?.ads_by_id).map((row,index)=>({...row,id:row.id||index}))
+  const timeAdRows=pancakePayloadRows(page.metrics?.ads_by_time).map((row,index)=>({...row,id:row.id||index,label:row.hour||row.time||row.name||`Mốc ${index+1}`}))
+  const campaignRows=pancakePayloadRows(page.metrics?.pages_campaigns).map((row,index)=>({...row,id:row.adset_id||row.ad_id||index}))
+  const topPosts=[...totals.posts].map((post,index)=>({...post,id:post.id||index,interactions:Object.values(post.reactions||{}).reduce((sum,value)=>sum+pancakeNumber(value),0)})).sort((a,b)=>(b.interactions+pancakeNumber(b.comment_count))-(a.interactions+pancakeNumber(a.comment_count))).slice(0,5)
+  const summary=[
+    {label:'Khách hàng mới',value:totals.hasPageStats?compactNumber(totals.customers):'—',tone:'violet'},
+    {label:'Hội thoại mới',value:totals.hasPageStats?compactNumber(totals.inboxes):'—',tone:'blue'},
+    {label:'Số điện thoại thu được',value:totals.hasPageStats?compactNumber(totals.phones):'—',tone:'teal'},
+    {label:'Video đã đăng',value:totals.hasPosts?compactNumber(totals.videos):'—',tone:'orange'},
+    {label:'Bình luận bài đăng',value:totals.hasPosts?compactNumber(totals.comments):'—',tone:'rose'},
+    {label:'Lượt cảm xúc',value:totals.hasPosts?compactNumber(totals.reactions):'—',tone:'violet'},
+  ]
+  const pageRows=[
+    ['Khách hàng mới','new_customer_count'],['Hội thoại mới','new_inbox_count'],['Tin nhắn từ khách','customer_inbox_count'],
+    ['Bình luận từ khách','customer_comment_count'],['Tin nhắn trên page','page_inbox_count'],['Bình luận trên page','page_comment_count'],
+    ['Số điện thoại thu được','phone_number_count'],['Số điện thoại riêng biệt','uniq_phone_number_count'],
+    ['Khách tương tác qua inbox','inbox_interactive_count'],['Giới thiệu website duy nhất','today_uniq_website_referral'],['Lượt truy cập website','today_website_guest_referral'],
+  ].map(([label,key])=>({label,key,value:pancakeSum(totals.pageRows,key)})).filter(row=>totals.pageRows.some(item=>item[row.key]!==undefined)||row.value>0)
+  return <details className="pancake-metric-page">
+    <summary className="pancake-metric-summary">
+      <span className="pancake-report-identity"><b>{page.page_name||page.page_id}</b><small>{page.platform||'Pancake'} · {person} · ID {page.page_id}</small></span>
+      <span className="pancake-report-summary-metrics"><span>Khách mới <b>{totals.hasPageStats?compactNumber(totals.customers):'—'}</b></span><span>Hội thoại <b>{totals.hasPageStats?compactNumber(totals.inboxes):'—'}</b></span><span>Video <b>{totals.hasPosts?compactNumber(totals.videos):'—'}</b></span></span>
+      <span className="pancake-report-updated">{page.last_sync_at?'Cập nhật '+new Date(page.last_sync_at).toLocaleString('vi-VN'):'Chưa đồng bộ'}</span>
+    </summary>
+    <div className="pancake-report-body">
+      <div className="pancake-report-period">Số liệu từ {pancakePeriod(month)}</div>
+      {metricErrors.length>0&&<div className="pancake-report-warning">Một số thống kê chưa lấy được: {metricErrors.map(([name,error])=>`${({pages:'hoạt động page',pages_campaigns:'chiến dịch',ads_by_id:'quảng cáo',ads_by_time:'quảng cáo theo thời gian',customer_engagements:'tương tác khách hàng',customer_engagements_hourly:'tương tác theo giờ',customer_feedbacks:'đánh giá',tags:'thẻ',users:'nhân viên',posts:'bài đăng'})[name]||'đánh giá'} (${error})`).join(' · ')}.</div>}
+      <div className="pancake-report-kpis">{summary.map(item=><div className={`pancake-report-kpi ${item.tone}`} key={item.label}><span>{item.label}</span><b>{item.value}</b><small>Trong kỳ</small></div>)}</div>
+      <div className="pancake-report-section-title"><h3>Xu hướng theo tuần</h3><span>Số liệu cộng theo ngày trong kỳ</span></div>
+      <div className="pancake-report-trends">
+        <PancakeTrendCard title="Khách hàng mới" values={pancakeWeekBars(totals.pageRows,'new_customer_count',month)} available={totals.hasPageStats}/>
+        <PancakeTrendCard title="Hội thoại mới" values={pancakeWeekBars(totals.pageRows,'new_inbox_count',month)} available={totals.hasPageStats}/>
+        <PancakeTrendCard title="Số điện thoại thu được" values={pancakeWeekBars(totals.pageRows,'phone_number_count',month)} available={totals.hasPageStats}/>
+      </div>
+      <div className="pancake-report-detail-grid">
+        <PancakeReportTable title="Hoạt động page" note="Tổng hợp số liệu trong kỳ" rows={pageRows} columns={[{key:'label',label:'Chỉ số'},{key:'value',label:'Số lượng',render:row=>compactNumber(row.value)}]} empty={page.errors?.pages||'Chưa có số liệu page trong kỳ này.'}/>
+        <PancakeReportTable title="Tương tác khách hàng" note="Tổng hội thoại, bình luận và đơn hàng" rows={seriesAvailable?(page.metrics?.customer_engagements?.data?.series||[]).map(row=>({name:({inbox:'Hội thoại qua inbox',comment:'Tương tác qua bình luận',total:'Tổng tương tác',new_customer_replied:'Khách mới đã được phản hồi',customer_engagement_new_inbox:'Khách mở hội thoại mới',order_count:'Đơn hàng tạo mới',old_order_count:'Đơn từ khách quay lại'})[row.name]||row.name,value:(row.data||[]).reduce((sum,value)=>sum+pancakeNumber(value),0)})):[]} columns={[{key:'name',label:'Hoạt động'},{key:'value',label:'Số lượng',render:row=>compactNumber(row.value)}]} empty={page.errors?.customer_engagements||'Chưa có dữ liệu tương tác trong kỳ này.'}/>
+        <PancakeReportTable title="Hiệu suất nhân viên" note="Tin nhắn, bình luận và đơn hàng được xử lý" rows={staffRows} columns={[{key:'name',label:'Nhân viên'},{key:'inbox',label:'Hội thoại',render:row=>compactNumber(row.inbox)},{key:'comments',label:'Bình luận',render:row=>compactNumber(row.comments)},{key:'orders',label:'Đơn hàng',render:row=>compactNumber(row.orders)},{key:'phones',label:'SĐT',render:row=>compactNumber(row.phones)},{key:'response',label:'Phản hồi TB',render:row=>pancakeAverageResponse(row.response)}]} empty={page.errors?.users||page.errors?.customer_engagements||'Chưa có dữ liệu nhân viên trong kỳ này.'}/>
+        <PancakeReportTable title="Bài đăng nổi bật" note="Xếp theo tổng bình luận và cảm xúc" rows={topPosts.map((post,index)=>({...post,title:`${({video:'Video',photo:'Ảnh',text:'Bài viết',livestream:'Livestream',rating:'Đánh giá'})[String(post.type||'').toLowerCase()]||'Bài đăng'} ${index+1}`,date:pancakeDate(post.inserted_at)}))} columns={[{key:'title',label:'Bài đăng',render:row=><span><b>{row.title}</b><small className="pancake-cell-subtitle">{row.date}</small></span>},{key:'comment_count',label:'Bình luận',render:row=>compactNumber(row.comment_count)},{key:'interactions',label:'Cảm xúc',render:row=>compactNumber(row.interactions)}]} empty={page.errors?.posts||'Chưa có bài đăng trong kỳ này.'}/>
+        <PancakeReportTable title="Hiệu quả quảng cáo" note="Theo từng quảng cáo" rows={adRows} columns={[{key:'name',label:'Quảng cáo',render:row=>row.name||`Quảng cáo ${row.id+1}`},{key:'status',label:'Trạng thái',render:row=>pancakeStatusLabel(row.status)},{key:'reach',label:'Tiếp cận',render:row=>compactNumber(pancakeNumber(row.reach))},{key:'impressions',label:'Hiển thị',render:row=>compactNumber(pancakeNumber(row.impressions))},{key:'spend',label:'Chi tiêu',render:row=>pancakeCurrency(row.spend,row.currency)}]} empty={page.errors?.ads_by_id||'Chưa có số liệu quảng cáo trong kỳ này.'}/>
+        <PancakeReportTable title="Chiến dịch quảng cáo" note="Ngân sách và trạng thái chiến dịch" rows={campaignRows} columns={[{key:'adset_id',label:'Nhóm quảng cáo',render:row=>row.adset_id||row.ad_id||'—'},{key:'status',label:'Trạng thái',render:row=>pancakeStatusLabel(row.status)},{key:'daily_budget',label:'Ngân sách/ngày',render:row=>pancakeCurrency(row.daily_budget,row.currency)},{key:'budget_remaining',label:'Còn lại',render:row=>pancakeCurrency(row.budget_remaining,row.currency)}]} empty={page.errors?.pages_campaigns||'Chưa có chiến dịch trong kỳ này.'}/>
+        <PancakeReportTable title="Thẻ hội thoại" note="Số lượt sử dụng thẻ trong kỳ" rows={tags} columns={[{key:'name',label:'Thẻ'},{key:'count',label:'Lượt dùng',render:row=>compactNumber(row.count)}]} empty={page.errors?.tags||'Chưa có số liệu thẻ trong kỳ này.'}/>
+        <PancakeReportTable title="Đánh giá khách hàng" note={feedback.available?`${compactNumber(feedback.count)} lượt đánh giá · trung bình ${feedback.hasAverage?feedback.average.toFixed(1):'—'} / 5 sao`:'Điểm hài lòng và phản hồi trong kỳ'} rows={feedback.people} columns={[{key:'name',label:'Nhân viên'},{key:'count',label:'Lượt đánh giá',render:row=>compactNumber(row.count)},{key:'average',label:'Điểm TB',render:row=>row.count?`${row.average.toFixed(1)} / 5`:'—'},{key:'automatic',label:'Botcake',render:row=>compactNumber(row.automatic)}]} empty={page.errors?.customer_feedbacks||'Chưa có đánh giá khách hàng trong kỳ này.'}/>
+        {timeAdRows.length>0&&<PancakeReportTable title="Quảng cáo theo thời điểm" note="Hiển thị và chi tiêu theo mốc Pancake trả về" rows={timeAdRows} columns={[{key:'label',label:'Mốc thời gian'},{key:'reach',label:'Tiếp cận',render:row=>compactNumber(pancakeNumber(row.reach))},{key:'impressions',label:'Hiển thị',render:row=>compactNumber(pancakeNumber(row.impressions))},{key:'spend',label:'Chi tiêu',render:row=>pancakeCurrency(row.spend,row.currency)}]}/>}
+      </div>
+      {feedback.available&&Object.keys(feedback.ratings).length>0&&<div className="pancake-rating-summary"><b>Phân bố sao</b>{[5,4,3,2,1].map(rating=><span key={rating}>★ {rating} <b>{compactNumber(feedback.ratings[String(rating)]||0)}</b></span>)}</div>}
+    </div>
+  </details>
+}
+
+function PancakePageComparison({pages,users,month}) {
+  if(pages.length<2) return null
+  const rows=pages.map(page=>({page,totals:pancakePageReport(page),person:users.find(user=>user.email===page.email)?.name||'Chưa gán'})).sort((a,b)=>b.totals.customers-a.totals.customers)
+  return <section className="pancake-page-comparison">
+    <div className="pancake-report-section-title"><h3>So sánh nhanh các page</h3><span>{month||'Kỳ hiện tại'} · cùng một kỳ dữ liệu</span></div>
+    <div className="pancake-report-table-scroll"><table><thead><tr><th>PAGE</th><th>KHÁCH MỚI</th><th>HỘI THOẠI MỚI</th><th>SỐ ĐIỆN THOẠI</th><th>VIDEO</th><th>BÌNH LUẬN</th></tr></thead><tbody>{rows.map(({page,totals,person})=><tr key={page.page_id}><td><b>{page.page_name||page.page_id}</b><small className="pancake-cell-subtitle">{person}</small></td><td>{totals.hasPageStats?compactNumber(totals.customers):'—'}</td><td>{totals.hasPageStats?compactNumber(totals.inboxes):'—'}</td><td>{totals.hasPageStats?compactNumber(totals.phones):'—'}</td><td>{totals.hasPosts?compactNumber(totals.videos):'—'}</td><td>{totals.hasPosts?compactNumber(totals.comments):'—'}</td></tr>)}</tbody></table></div>
+  </section>
 }
 
 function PancakeConnectModal({onClose,onConnect}) {

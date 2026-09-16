@@ -93,24 +93,75 @@ input,select,textarea{accent-color:var(--brand)}
 .connect-result>span{font-size:11px;color:var(--ink-500)}
 .pancake-result-row{display:flex;align-items:center;gap:8px;font-size:11px}
 .pancake-result-row span{flex:1}
-@media(max-width:760px){.pancake-page-row{align-items:flex-start;flex-wrap:wrap}.pancake-page-copy{min-width:160px}.pancake-page-actions{width:100%;flex-wrap:wrap}.pancake-page-actions select{flex:1;max-width:none}}
+@media(max-width:760px){.pancake-page-row{align-items:flex-start;flex-wrap:wrap}.pancake-page-copy{min-width:160px}.pancake-page-actions{width:100%;flex-wrap:wrap}.pancake-page-actions select{flex:1;max-width:none}.pancake-row-error{text-align:left}}
 
 .pancake-page-row{flex-wrap:wrap}
 .pancake-page-actions{flex-wrap:wrap}
 .pancake-row-error{position:static;margin-left:auto;flex-basis:100%;text-align:right}
 .pancake-sync-result{margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fcfbff;color:var(--ink-700);font-size:11px;line-height:1.5}
 .pancake-sync-result ul{margin:5px 0 0;padding-left:18px;color:var(--danger)}
-.pancake-metrics-panel{padding:18px 20px}
-.pancake-metric-pages{display:grid;gap:8px}
-.pancake-metric-page,.pancake-metric-endpoint{border:1px solid var(--line-2);border-radius:10px;background:#fff}
-.pancake-metric-page>summary,.pancake-metric-endpoint>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;cursor:pointer;font-size:11px;font-weight:650;list-style-position:inside}
-.pancake-metric-page>summary>span:first-child{display:grid;gap:4px;min-width:0}
-.pancake-metric-page>summary small{font-size:10px;font-weight:400;color:var(--ink-500);overflow-wrap:anywhere}
-.pancake-metric-page>summary>span:last-child{font-size:10px;font-weight:400;color:var(--ink-500);white-space:nowrap}
-.pancake-metric-endpoints{display:grid;gap:7px;padding:0 10px 10px}
-.pancake-metric-endpoint{background:#fcfbff}
-.pancake-metric-endpoint>summary{display:list-item;padding:9px 11px}
-.pancake-endpoint-error{color:var(--danger);font-weight:500}
-.pancake-metric-endpoint pre{max-height:360px;overflow:auto;margin:0 10px 10px;padding:10px;border-radius:8px;background:#f3f2f7;color:var(--ink-700);font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
-.pancake-metric-endpoints>.muted{padding:5px 4px;font-size:11px}
-@media(max-width:760px){.pancake-metrics-panel{padding:13px}.pancake-metric-page>summary{align-items:flex-start;flex-direction:column}.pancake-page-actions{width:100%}.pancake-page-actions select{flex:1;max-width:none}.pancake-row-error{text-align:left}}
+.pancake-metrics-panel{padding:20px}
+.pancake-metrics-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:15px}
+.pancake-metrics-heading .eyebrow{margin-bottom:5px}
+.pancake-metrics-heading h2{margin:0;color:var(--ink-900);font-size:17px}
+.pancake-metrics-heading p{margin:5px 0 0;font-size:11px;color:var(--ink-500)}
+.pancake-period-badge{padding:7px 11px;border:1px solid var(--brand-line);border-radius:999px;background:var(--brand-soft);color:var(--brand-700);font-size:11px;font-weight:700;white-space:nowrap}
+.pancake-page-comparison{margin-bottom:14px;padding:15px;border:1px solid var(--line);border-radius:16px;background:#fff}
+.pancake-report-section-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px}
+.pancake-report-section-title h3{margin:0;color:var(--ink-900);font-size:13px}
+.pancake-report-section-title>span{color:var(--ink-500);font-size:10px}
+.pancake-report-table-scroll{overflow-x:auto;max-width:100%}
+.pancake-report-table-scroll table{width:100%;border-collapse:collapse;font-size:11px;text-align:left}
+.pancake-report-table-scroll th{padding:9px 10px;background:#faf9fd;color:var(--ink-500);font-size:9px;font-weight:750;letter-spacing:.4px;white-space:nowrap}
+.pancake-report-table-scroll td{padding:10px;border-top:1px solid var(--line-2);color:var(--ink-700);vertical-align:middle}
+.pancake-report-table-scroll td:first-child{color:var(--ink-900)}
+.pancake-report-table-scroll tbody tr:hover{background:#fcfbff}
+.pancake-report-table-scroll td b{display:block;font-weight:650}
+.pancake-cell-subtitle{display:block;margin-top:3px;color:var(--ink-500);font-size:9px;font-weight:400}
+.pancake-metric-pages{display:grid;gap:10px}
+.pancake-metric-page{overflow:hidden;border:1px solid var(--line);border-radius:17px;background:rgba(255,255,255,.92)}
+.pancake-metric-summary{display:grid;grid-template-columns:minmax(170px,1fr) minmax(300px,1.3fr) auto;align-items:center;gap:14px;padding:14px 16px;cursor:pointer;list-style:none}
+.pancake-metric-summary::-webkit-details-marker{display:none}
+.pancake-report-identity{display:grid;gap:4px;min-width:0}
+.pancake-report-identity b{overflow:hidden;color:var(--ink-900);font-size:13px;text-overflow:ellipsis;white-space:nowrap}
+.pancake-report-identity small,.pancake-report-updated{color:var(--ink-500);font-size:10px;overflow-wrap:anywhere}
+.pancake-report-summary-metrics{display:flex;flex-wrap:wrap;gap:6px}
+.pancake-report-summary-metrics>span{padding:5px 8px;border:1px solid var(--line-2);border-radius:999px;background:#fcfbff;color:var(--ink-500);font-size:9px;white-space:nowrap}
+.pancake-report-summary-metrics b{margin-left:3px;color:var(--brand-700);font-size:10px}
+.pancake-report-updated{text-align:right;white-space:nowrap}
+.pancake-metric-page[open] .pancake-metric-summary{border-bottom:1px solid var(--line-2);background:#fcfbff}
+.pancake-report-body{padding:16px}
+.pancake-report-period{margin-bottom:12px;color:var(--ink-500);font-size:10px}
+.pancake-report-warning{margin-bottom:12px;padding:10px 12px;border:1px solid #fed7aa;border-radius:11px;background:#fff7ed;color:#9a3412;font-size:10px;line-height:1.5}
+.pancake-report-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;margin-bottom:19px}
+.pancake-report-kpi{display:grid;gap:6px;min-width:0;padding:12px;border:1px solid var(--line);border-radius:14px;background:#fff}
+.pancake-report-kpi>span{min-height:28px;color:var(--ink-500);font-size:10px;line-height:1.4}
+.pancake-report-kpi>b{color:var(--ink-900);font-size:20px;line-height:1}
+.pancake-report-kpi>small{color:var(--ink-500);font-size:9px}
+.pancake-report-kpi.violet b{color:var(--brand-700)}
+.pancake-report-kpi.blue b{color:#2563eb}
+.pancake-report-kpi.teal b{color:#0f9f91}
+.pancake-report-kpi.orange b{color:#c2410c}
+.pancake-report-kpi.rose b{color:#e11d48}
+.pancake-report-trends{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:18px}
+.pancake-trend-card{min-width:0;padding:13px;border:1px solid var(--line);border-radius:15px;background:#fff}
+.pancake-trend-card h4,.pancake-report-table h4{margin:0;color:var(--ink-900);font-size:11px}
+.pancake-week-bars{display:flex;align-items:flex-end;justify-content:space-around;gap:8px;height:128px;padding:10px 3px 0}
+.pancake-week-bar{display:grid;grid-template-rows:16px 1fr 17px;align-items:end;justify-items:center;gap:4px;width:100%;height:100%;min-width:0}
+.pancake-week-bar span{color:var(--ink-500);font-size:8px;white-space:nowrap}
+.pancake-week-bar i{display:block;align-self:end;width:min(28px,68%);min-height:3px;border-radius:6px 6px 2px 2px;background:linear-gradient(180deg,#8b5cf6,var(--brand));transition:height .2s ease}
+.pancake-week-bar small{color:var(--ink-500);font-size:8px;white-space:nowrap}
+.pancake-report-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.pancake-report-table{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:15px;background:#fff}
+.pancake-report-table-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 13px;border-bottom:1px solid var(--line-2)}
+.pancake-report-table-head small{display:block;margin-top:4px;color:var(--ink-500);font-size:9px}
+.pancake-report-table-head>span{display:grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:var(--brand-soft);color:var(--brand-700);font-size:9px;font-weight:700}
+.pancake-report-table-scroll table{min-width:440px}
+.pancake-report-empty{margin:0;padding:14px;color:var(--ink-500);font-size:10px}
+.pancake-rating-summary{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink-500);font-size:10px}
+.pancake-rating-summary>b{margin-right:5px;color:var(--ink-900)}
+.pancake-rating-summary>span{padding:5px 8px;border-radius:999px;background:#fffbeb;color:#92400e}
+.pancake-rating-summary>span b{margin-left:4px;color:var(--ink-900)}
+@media(max-width:1100px){.pancake-report-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.pancake-metric-summary{grid-template-columns:minmax(150px,1fr) minmax(250px,1.2fr)}}
+@media(max-width:800px){.pancake-report-trends{grid-template-columns:1fr}.pancake-report-detail-grid{grid-template-columns:1fr}.pancake-report-updated{grid-column:1/-1;text-align:left}}
+@media(max-width:600px){.pancake-metrics-panel{padding:13px}.pancake-metrics-heading{align-items:flex-start}.pancake-report-summary-metrics{grid-column:1/-1}.pancake-metric-summary{grid-template-columns:1fr;gap:8px;padding:12px}.pancake-report-updated{grid-column:auto}.pancake-report-body{padding:12px}.pancake-report-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.pancake-page-comparison{padding:10px}.pancake-report-section-title{align-items:flex-start;flex-direction:column}}
