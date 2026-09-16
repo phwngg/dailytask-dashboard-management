@@ -1140,7 +1140,7 @@ func pancakeVideoPostCount(value any) int {
 	posts := firstArray(value, "posts")
 	count := 0
 	for _, item := range posts {
-		if post, ok := item.(map[string]any); ok && strings.EqualFold(stringValue(post["type"]), "video") {
+		if post, ok := item.(map[string]any); ok && strings.EqualFold(stringValue(post["type"]), "video") || ok && strings.EqualFold(stringValue(post["post_type"]), "video") || ok && strings.EqualFold(stringValue(post["content_type"]), "video") {
 			count++
 		}
 	}

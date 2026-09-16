@@ -584,6 +584,15 @@ function pancakeNumber(value) {
   return Number.isFinite(number) ? number : 0
 }
 
+function pancakePostType(post) {
+  return String(post?.type||post?.post_type||post?.content_type||'').toLowerCase()
+}
+
+function pancakePostLink(post) {
+  const value=post?.link||post?.permalink_url||post?.permalink||post?.url||post?.video_url||''
+  return /^https?:\/\//i.test(String(value)) ? String(value) : ''
+}
+
 function pancakeSum(rows, field) {
   return rows.reduce((sum,row)=>sum+pancakeNumber(row?.[field]),0)
 }
@@ -602,7 +611,7 @@ function pancakePageReport(page) {
     inboxes:pancakeSum(pageRows,'new_inbox_count'),
     phones:pancakeSum(pageRows,'phone_number_count'),
     uniquePhones:pancakeSum(pageRows,'uniq_phone_number_count'),
-    videos:posts.filter(post=>String(post.type).toLowerCase()==='video').length,
+    videos:posts.filter(post=>pancakePostType(post)==='video').length,
     comments:pancakeSum(posts,'comment_count'),
     reactions,
   }
@@ -867,7 +876,7 @@ function PancakeMetricsPage({page,user,totals,period,modal=false}) {
         <PancakeReportTable title="Hoạt động page" note="Tổng hợp số liệu trong kỳ" rows={pageRows} columns={[{key:'label',label:'Chỉ số'},{key:'value',label:'Số lượng',render:row=>compactNumber(row.value)}]} empty={page.errors?.pages||'Chưa có số liệu page trong kỳ này.'}/>
         <PancakeReportTable title="Tương tác khách hàng" note="Tổng hội thoại, bình luận và đơn hàng" rows={seriesAvailable?(page.metrics?.customer_engagements?.data?.series||[]).map(row=>({name:({inbox:'Hội thoại qua inbox',comment:'Tương tác qua bình luận',total:'Tổng tương tác',new_customer_replied:'Khách mới đã được phản hồi',customer_engagement_new_inbox:'Khách mở hội thoại mới',order_count:'Đơn hàng tạo mới',old_order_count:'Đơn từ khách quay lại'})[row.name]||row.name,value:(row.data||[]).reduce((sum,value)=>sum+pancakeNumber(value),0)})):[]} columns={[{key:'name',label:'Hoạt động'},{key:'value',label:'Số lượng',render:row=>compactNumber(row.value)}]} empty={page.errors?.customer_engagements||'Chưa có dữ liệu tương tác trong kỳ này.'}/>
         <PancakeReportTable title="Hiệu suất nhân viên" note="Tin nhắn, bình luận và đơn hàng được xử lý" rows={staffRows} columns={[{key:'name',label:'Nhân viên'},{key:'inbox',label:'Hội thoại',render:row=>compactNumber(row.inbox)},{key:'comments',label:'Bình luận',render:row=>compactNumber(row.comments)},{key:'orders',label:'Đơn hàng',render:row=>compactNumber(row.orders)},{key:'phones',label:'SĐT',render:row=>compactNumber(row.phones)},{key:'response',label:'Phản hồi TB',render:row=>pancakeAverageResponse(row.response)}]} empty={page.errors?.users||page.errors?.customer_engagements||'Chưa có dữ liệu nhân viên trong kỳ này.'}/>
-        <PancakeReportTable title="Bài đăng nổi bật" note="Xếp theo tổng bình luận và cảm xúc" rows={topPosts.map((post,index)=>({...post,title:`${({video:'Video',photo:'Ảnh',text:'Bài viết',livestream:'Livestream',rating:'Đánh giá'})[String(post.type||'').toLowerCase()]||'Bài đăng'} ${index+1}`,date:pancakeDate(post.inserted_at)}))} columns={[{key:'title',label:'Bài đăng',render:row=><span><b>{row.title}</b><small className="pancake-cell-subtitle">{row.date}</small></span>},{key:'comment_count',label:'Bình luận',render:row=>compactNumber(row.comment_count)},{key:'interactions',label:'Cảm xúc',render:row=>compactNumber(row.interactions)}]} empty={page.errors?.posts||'Chưa có bài đăng trong kỳ này.'}/>
+        <PancakeReportTable title="Bài đăng nổi bật" note="Xếp theo tổng bình luận và cảm xúc" rows={topPosts.map((post,index)=>({...post,title:`${({video:'Video',photo:'Ảnh',text:'Bài viết',livestream:'Livestream',rating:'Đánh giá'})[pancakePostType(post)]||'Bài đăng'} ${index+1}`,date:pancakeDate(post.inserted_at),url:pancakePostLink(post)}))} columns={[{key:'title',label:'Bài đăng',render:row=><span><b>{row.url?<a className="pancake-post-link" href={row.url} target="_blank" rel="noreferrer">{row.title} ↗</a>:row.title}</b><small className="pancake-cell-subtitle">{row.date}{row.url?' · Có link video/bài đăng':''}</small></span>},{key:'comment_count',label:'Bình luận',render:row=>compactNumber(row.comment_count)},{key:'interactions',label:'Cảm xúc',render:row=>compactNumber(row.interactions)}]} empty={page.errors?.posts||'Chưa có bài đăng trong kỳ này.'}/>
         <PancakeReportTable title="Hiệu quả quảng cáo" note="Theo từng quảng cáo" rows={adRows} columns={[{key:'name',label:'Quảng cáo',render:row=>row.name||`Quảng cáo ${row.id+1}`},{key:'status',label:'Trạng thái',render:row=>pancakeStatusLabel(row.status)},{key:'reach',label:'Tiếp cận',render:row=>compactNumber(pancakeNumber(row.reach))},{key:'impressions',label:'Hiển thị',render:row=>compactNumber(pancakeNumber(row.impressions))},{key:'spend',label:'Chi tiêu',render:row=>pancakeCurrency(row.spend,row.currency)}]} empty={page.errors?.ads_by_id||'Chưa có số liệu quảng cáo trong kỳ này.'}/>
         <PancakeReportTable title="Chiến dịch quảng cáo" note="Ngân sách và trạng thái chiến dịch" rows={campaignRows} columns={[{key:'adset_id',label:'Nhóm quảng cáo',render:row=>row.adset_id||row.ad_id||'—'},{key:'status',label:'Trạng thái',render:row=>pancakeStatusLabel(row.status)},{key:'daily_budget',label:'Ngân sách/ngày',render:row=>pancakeCurrency(row.daily_budget,row.currency)},{key:'budget_remaining',label:'Còn lại',render:row=>pancakeCurrency(row.budget_remaining,row.currency)}]} empty={page.errors?.pages_campaigns||'Chưa có chiến dịch trong kỳ này.'}/>
         <PancakeReportTable title="Thẻ hội thoại" note="Số lượt sử dụng thẻ trong kỳ" rows={tags} columns={[{key:'name',label:'Thẻ'},{key:'count',label:'Lượt dùng',render:row=>compactNumber(row.count)}]} empty={page.errors?.tags||'Chưa có số liệu thẻ trong kỳ này.'}/>
