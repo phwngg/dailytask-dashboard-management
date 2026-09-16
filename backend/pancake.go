@@ -6,7 +6,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -17,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,14 +36,16 @@ type pancakePage struct {
 }
 
 type pancakePageState struct {
-	PageID     string `json:"page_id"`
-	PageName   string `json:"page_name"`
-	Platform   string `json:"platform"`
-	Status     string `json:"status"`
-	Mapped     bool   `json:"mapped"`
-	LastSeenAt string `json:"last_seen_at,omitempty"`
-	LastSyncAt string `json:"last_sync_at,omitempty"`
-	LastError  string `json:"last_error,omitempty"`
+	PageID           string `json:"page_id"`
+	PageName         string `json:"page_name"`
+	Platform         string `json:"platform"`
+	Status           string `json:"status"`
+	Mapped           bool   `json:"mapped"`
+	AssignedEmail    string `json:"assigned_email,omitempty"`
+	MetricErrorCount int    `json:"metric_error_count"`
+	LastSeenAt       string `json:"last_seen_at,omitempty"`
+	LastSyncAt       string `json:"last_sync_at,omitempty"`
+	LastError        string `json:"last_error,omitempty"`
 }
 
 type pancakeStatus struct {
@@ -62,6 +64,16 @@ type channelStat struct {
 	Followers float64 `json:"followers"`
 	SyncedAt  string  `json:"synced_at"`
 	Source    string  `json:"source"`
+}
+
+type pancakePageMetrics struct {
+	PageID   string            `json:"page_id"`
+	PageName string            `json:"page_name"`
+	Platform string            `json:"platform"`
+	Email    string            `json:"email,omitempty"`
+	LastSync string            `json:"last_sync_at,omitempty"`
+	Metrics  map[string]any    `json:"metrics"`
+	Errors   map[string]string `json:"errors,omitempty"`
 }
 
 type pancakeAPIError struct{ status int }
@@ -334,26 +346,13 @@ func (a *api) channelStats(ctx context.Context, month string) ([]channelStat, er
 }
 
 func (a *api) pancakeStatus(ctx context.Context) (pancakeStatus, error) {
-	mapped := map[string]bool{}
-	rows, err := a.db.QueryContext(ctx, "SELECT page_id FROM channels WHERE lower(platform)='pancake' AND page_id<>''")
-	if err != nil {
-		return pancakeStatus{}, err
-	}
-	for rows.Next() {
-		var pageID string
-		if err := rows.Scan(&pageID); err != nil {
-			rows.Close()
-			return pancakeStatus{}, err
-		}
-		mapped[pageID] = true
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return pancakeStatus{}, err
-	}
-	rows.Close()
-
-	rows, err = a.db.QueryContext(ctx, "SELECT page_id,page_name,platform,status,last_seen_at,last_sync_at,last_error FROM pancake_pages ORDER BY page_name,page_id")
+	rows, err := a.db.QueryContext(ctx, `SELECT p.page_id,p.page_name,p.platform,p.status,
+		p.last_seen_at,p.last_sync_at,p.last_error,coalesce(a.email,''),
+		coalesce(sum(CASE WHEN m.error<>'' THEN 1 ELSE 0 END),0)
+		FROM pancake_pages p
+		LEFT JOIN pancake_page_assignments a ON a.page_id=p.page_id
+		LEFT JOIN pancake_metric_snapshots m ON m.page_id=p.page_id AND m.month=?
+		GROUP BY p.page_id ORDER BY p.page_name,p.page_id`, pancakeCurrentMonth())
 	if err != nil {
 		return pancakeStatus{}, err
 	}
@@ -361,10 +360,10 @@ func (a *api) pancakeStatus(ctx context.Context) (pancakeStatus, error) {
 	out := pancakeStatus{Pages: []pancakePageState{}}
 	for rows.Next() {
 		var page pancakePageState
-		if err := rows.Scan(&page.PageID, &page.PageName, &page.Platform, &page.Status, &page.LastSeenAt, &page.LastSyncAt, &page.LastError); err != nil {
+		if err := rows.Scan(&page.PageID, &page.PageName, &page.Platform, &page.Status, &page.LastSeenAt, &page.LastSyncAt, &page.LastError, &page.AssignedEmail, &page.MetricErrorCount); err != nil {
 			return pancakeStatus{}, err
 		}
-		page.Mapped = mapped[page.PageID]
+		page.Mapped = page.AssignedEmail != ""
 		out.Pages = append(out.Pages, page)
 		if page.Status == "connected" {
 			out.Connected++
@@ -374,6 +373,59 @@ func (a *api) pancakeStatus(ctx context.Context) (pancakeStatus, error) {
 		}
 	}
 	out.Configured = len(out.Pages)
+	return out, rows.Err()
+}
+
+func (a *api) pancakeMetrics(ctx context.Context, month string) ([]pancakePageMetrics, error) {
+	rows, err := a.db.QueryContext(ctx, `SELECT p.page_id,p.page_name,p.platform,coalesce(a.email,''),p.last_sync_at
+		FROM pancake_pages p LEFT JOIN pancake_page_assignments a ON a.page_id=p.page_id
+		ORDER BY p.page_name,p.page_id`)
+	if err != nil {
+		return nil, err
+	}
+	out := []pancakePageMetrics{}
+	indices := map[string]int{}
+	for rows.Next() {
+		var page pancakePageMetrics
+		if err := rows.Scan(&page.PageID, &page.PageName, &page.Platform, &page.Email, &page.LastSync); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		page.Metrics = map[string]any{}
+		page.Errors = map[string]string{}
+		indices[page.PageID] = len(out)
+		out = append(out, page)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	rows, err = a.db.QueryContext(ctx, `SELECT page_id,endpoint,payload_json,error FROM pancake_metric_snapshots
+		WHERE month=? ORDER BY page_id,endpoint`, month)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pageID, endpoint, raw, metricErr string
+		if err := rows.Scan(&pageID, &endpoint, &raw, &metricErr); err != nil {
+			return nil, err
+		}
+		i, ok := indices[pageID]
+		if !ok {
+			continue
+		}
+		var payload any
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			return nil, err
+		}
+		out[i].Metrics[endpoint] = payload
+		if metricErr != "" {
+			out[i].Errors[endpoint] = metricErr
+		}
+	}
 	return out, rows.Err()
 }
 
@@ -523,7 +575,6 @@ func (a *api) mapPancakeChannel(w http.ResponseWriter, r *http.Request, me user)
 	var req struct {
 		PageID   string `json:"page_id"`
 		Email    string `json:"email"`
-		Slot     int    `json:"slot"`
 		PageName string `json:"page_name"`
 	}
 	if decode(r, &req) != nil {
@@ -533,8 +584,8 @@ func (a *api) mapPancakeChannel(w http.ResponseWriter, r *http.Request, me user)
 	req.PageID = strings.TrimSpace(req.PageID)
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	req.PageName = strings.TrimSpace(req.PageName)
-	if req.PageID == "" || req.Email == "" || (req.Slot != 1 && req.Slot != 2) {
-		writeError(w, http.StatusBadRequest, "Cần page, nhân sự và slot 1 hoặc 2")
+	if req.PageID == "" || req.Email == "" {
+		writeError(w, http.StatusBadRequest, "Cần page và nhân sự")
 		return
 	}
 	var n int
@@ -550,41 +601,36 @@ func (a *api) mapPancakeChannel(w http.ResponseWriter, r *http.Request, me user)
 		writeError(w, http.StatusBadRequest, "Nhân sự không hợp lệ")
 		return
 	}
-	var oldPageID, oldPlatform string
-	err := a.db.QueryRowContext(r.Context(), "SELECT page_id,platform FROM channels WHERE email=? AND slot=?", req.Email, req.Slot).Scan(&oldPageID, &oldPlatform)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		fail(w, err)
-		return
-	}
-	if err == nil && oldPageID != "" && oldPageID != req.PageID && !strings.EqualFold(oldPlatform, "hub") {
-		writeError(w, http.StatusConflict, "Slot này đã có page Pancake khác")
-		return
-	}
-	var otherEmail string
-	var otherSlot int
-	err = a.db.QueryRowContext(r.Context(), "SELECT email,slot FROM channels WHERE lower(platform)='pancake' AND page_id=? AND NOT(email=? AND slot=?)", req.PageID, req.Email, req.Slot).Scan(&otherEmail, &otherSlot)
-	if err == nil {
-		writeError(w, http.StatusConflict, "Page này đã được gán cho "+otherEmail+" slot "+fmt.Sprint(otherSlot))
-		return
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		fail(w, err)
-		return
-	}
 	if req.PageName == "" {
 		_ = a.db.QueryRowContext(r.Context(), "SELECT page_name FROM pancake_pages WHERE page_id=?", req.PageID).Scan(&req.PageName)
 	}
-	_, err = a.db.ExecContext(r.Context(), "INSERT INTO channels(email,slot,platform,page_id,page_name) VALUES(?,?,'pancake',?,?) ON CONFLICT(email,slot) DO UPDATE SET platform='pancake',page_id=excluded.page_id,page_name=excluded.page_name", req.Email, req.Slot, req.PageID, req.PageName)
+	_, err := a.db.ExecContext(r.Context(), `INSERT INTO pancake_page_assignments(page_id,email) VALUES(?,?)
+		ON CONFLICT(page_id) DO UPDATE SET email=excluded.email,updated_at=CURRENT_TIMESTAMP`, req.PageID, req.Email)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "page_id": req.PageID, "email": req.Email, "slot": req.Slot})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "page_id": req.PageID, "email": req.Email, "page_name": req.PageName})
+}
+
+func (a *api) unmapPancakeChannel(w http.ResponseWriter, r *http.Request, me user) {
+	if !require(w, me, "channel.sync") {
+		return
+	}
+	pageID := strings.TrimSpace(r.PathValue("page_id"))
+	if pageID == "" {
+		writeError(w, http.StatusBadRequest, "Cần page ID")
+		return
+	}
+	if _, err := a.db.ExecContext(r.Context(), "DELETE FROM pancake_page_assignments WHERE page_id=?", pageID); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "page_id": pageID})
 }
 
 type mappedPancakePage struct {
 	Email    string
-	Slot     int
 	PageID   string
 	TokenEnc string
 }
@@ -595,6 +641,105 @@ type pancakeSyncResult struct {
 	Synced int      `json:"synced"`
 	Failed int      `json:"failed"`
 	Errors []string `json:"errors,omitempty"`
+}
+
+type pancakeMetricRequest struct {
+	Name  string
+	Path  string
+	Query url.Values
+}
+
+type pancakePageRateLimiter struct{ last time.Time }
+
+func (l *pancakePageRateLimiter) wait(ctx context.Context) error {
+	if !l.last.IsZero() {
+		if delay := time.Until(l.last.Add(220 * time.Millisecond)); delay > 0 {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	l.last = time.Now()
+	return nil
+}
+
+var pancakeLocation = time.FixedZone("Asia/Ho_Chi_Minh", 7*60*60)
+
+func pancakeCurrentMonth() string { return time.Now().In(pancakeLocation).Format("2006-01") }
+
+func pancakeMonthRange(month string, now time.Time) (time.Time, time.Time, error) {
+	start, err := time.ParseInLocation("2006-01", month, pancakeLocation)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	end := start.AddDate(0, 1, 0).Add(-time.Second)
+	now = now.In(pancakeLocation)
+	if start.After(now) {
+		return time.Time{}, time.Time{}, errors.New("không thể đồng bộ tháng chưa đến")
+	}
+	if end.After(now) {
+		end = now
+	}
+	return start, end, nil
+}
+
+func pancakeReportRange(start, end time.Time) string {
+	return start.In(pancakeLocation).Format("02/01/2006 15:04:05") + " - " + end.In(pancakeLocation).Format("02/01/2006 15:04:05")
+}
+
+func pancakeFeedbackRanges(start, end time.Time) [][2]time.Time {
+	var ranges [][2]time.Time
+	for from := start; !from.After(end); {
+		until := from.Add(30*24*time.Hour - time.Second)
+		if until.After(end) {
+			until = end
+		}
+		ranges = append(ranges, [2]time.Time{from, until})
+		from = until.Add(time.Second)
+	}
+	return ranges
+}
+
+func pancakeMetricRequests(start, end time.Time) []pancakeMetricRequest {
+	feedbackRanges := pancakeFeedbackRanges(start, end)
+	unixQuery := func() url.Values {
+		return url.Values{"since": {fmt.Sprint(start.Unix())}, "until": {fmt.Sprint(end.Unix())}}
+	}
+	longRange := url.Values{"date_range": {pancakeReportRange(start, end)}}
+	engagementDaily := longRange.Clone()
+	engagementDaily.Set("by_hour", "false")
+	engagementHourly := longRange.Clone()
+	engagementHourly.Set("by_hour", "true")
+	adsByID, adsByTime := unixQuery(), unixQuery()
+	adsByID.Set("type", "by_id")
+	adsByTime.Set("type", "by_time")
+	requests := []pancakeMetricRequest{
+		{Name: "pages", Path: "statistics/pages", Query: unixQuery()},
+		{Name: "pages_campaigns", Path: "statistics/pages_campaigns", Query: unixQuery()},
+		{Name: "ads_by_id", Path: "statistics/ads", Query: adsByID},
+		{Name: "ads_by_time", Path: "statistics/ads", Query: adsByTime},
+		{Name: "customer_engagements", Path: "statistics/customer_engagements", Query: engagementDaily},
+		{Name: "customer_engagements_hourly", Path: "statistics/customer_engagements", Query: engagementHourly},
+		{Name: "tags", Path: "statistics/tags", Query: unixQuery()},
+		{Name: "users", Path: "statistics/users", Query: longRange},
+	}
+	for i, span := range feedbackRanges {
+		query := url.Values{"since": {fmt.Sprint(span[0].Unix())}, "until": {fmt.Sprint(span[1].Unix())}}
+		name := "customer_feedbacks"
+		if len(feedbackRanges) > 1 {
+			name += fmt.Sprintf("_part_%d", i+1)
+		}
+		requests = append(requests, pancakeMetricRequest{Name: name, Path: "statistics/customer_feedbacks", Query: query})
+	}
+	requests = append(requests, pancakeMetricRequest{
+		Name: "posts", Path: "posts",
+		Query: url.Values{"since": {fmt.Sprint(start.Unix())}, "until": {fmt.Sprint(end.Unix())}},
+	})
+	return requests
 }
 
 func (a *api) pancakeSync(w http.ResponseWriter, r *http.Request, me user) {
@@ -609,7 +754,7 @@ func (a *api) pancakeSync(w http.ResponseWriter, r *http.Request, me user) {
 	}
 	month := strings.TrimSpace(req.Month)
 	if month == "" {
-		month = time.Now().Format("2006-01")
+		month = pancakeCurrentMonth()
 	}
 	if _, err := time.Parse("2006-01", month); err != nil {
 		writeError(w, http.StatusBadRequest, "Tháng không hợp lệ")
@@ -628,14 +773,16 @@ func (a *api) syncPancake(ctx context.Context, month string) (pancakeSyncResult,
 	defer pancakeSyncMu.Unlock()
 
 	result := pancakeSyncResult{Month: month}
-	rows, err := a.db.QueryContext(ctx, "SELECT c.email,c.slot,c.page_id,p.page_access_token_enc FROM channels c JOIN pancake_pages p ON p.page_id=c.page_id WHERE lower(c.platform)='pancake' AND c.page_id<>'' ORDER BY c.email,c.slot")
+	rows, err := a.db.QueryContext(ctx, `SELECT a.email,p.page_id,p.page_access_token_enc
+		FROM pancake_page_assignments a JOIN pancake_pages p ON p.page_id=a.page_id
+		ORDER BY a.email,p.page_id`)
 	if err != nil {
 		return result, err
 	}
 	var pages []mappedPancakePage
 	for rows.Next() {
 		var page mappedPancakePage
-		if err := rows.Scan(&page.Email, &page.Slot, &page.PageID, &page.TokenEnc); err != nil {
+		if err := rows.Scan(&page.Email, &page.PageID, &page.TokenEnc); err != nil {
 			rows.Close()
 			return result, err
 		}
@@ -648,69 +795,215 @@ func (a *api) syncPancake(ctx context.Context, month string) (pancakeSyncResult,
 	rows.Close()
 	result.Found = len(pages)
 
-	start, _ := time.ParseInLocation("2006-01", month, time.UTC)
-	end := start.AddDate(0, 1, 0).Add(-time.Second)
-	if end.After(time.Now()) {
-		end = time.Now()
+	start, end, err := pancakeMonthRange(month, time.Now())
+	if err != nil {
+		return result, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	videoCounts := map[string]int{}
 	for _, page := range pages {
 		token, err := decryptPancakeToken(a.pancakeKey, page.TokenEnc)
 		if err != nil {
 			result.Failed++
-			result.Errors = append(result.Errors, page.PageID+": Không đọc được page token")
+			result.Errors = append(result.Errors, page.PageID+": không đọc được page token")
 			_, _ = a.db.ExecContext(ctx, "UPDATE pancake_pages SET status='error',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE page_id=?", "Không đọc được page token", page.PageID)
 			continue
 		}
-		videos, err := pancakeCountPosts(ctx, page.PageID, token, start.Unix(), end.Unix())
-		if err != nil {
-			result.Failed++
-			result.Errors = append(result.Errors, page.PageID+": "+pancakeStatusError(err))
-			status := "error"
-			var apiErr *pancakeAPIError
-			if errors.As(err, &apiErr) && (apiErr.status == http.StatusUnauthorized || apiErr.status == http.StatusForbidden) {
-				status = "needs_reconnect"
+
+		authFailed := false
+		videoCounts[page.Email] += 0
+		rateLimit := &pancakePageRateLimiter{}
+		for _, request := range pancakeMetricRequests(start, end) {
+			query := request.Query
+			query.Set("page_access_token", token)
+			var payload any
+			if request.Name == "posts" {
+				payload, err = pancakeFetchPosts(ctx, page.PageID, token, start.Unix(), end.Unix(), rateLimit)
+			} else {
+				payload, err = pancakeFetchMetric(ctx, page.PageID, request.Path, query, rateLimit)
 			}
-			_, _ = a.db.ExecContext(ctx, "UPDATE pancake_pages SET status=?,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE page_id=?", status, pancakeStatusError(err), page.PageID)
-			continue
+			if err != nil {
+				result.Failed++
+				result.Errors = append(result.Errors, page.PageID+" / "+request.Name+": "+pancakeStatusError(err))
+				var apiErr *pancakeAPIError
+				if errors.As(err, &apiErr) && apiErr.status == http.StatusUnauthorized {
+					authFailed = true
+				}
+			}
+			if err := a.savePancakeMetric(ctx, page.PageID, month, request.Name, payload, err, now); err != nil {
+				return result, err
+			}
+			if err != nil {
+				continue
+			}
+			result.Synced++
+			if request.Name == "posts" {
+				videoCounts[page.Email] += pancakeVideoPostCount(payload)
+			}
 		}
-		_, err = a.db.ExecContext(ctx, "INSERT INTO channel_stats(month,email,slot,videos,views,followers,synced_at,source) VALUES(?,?,?,?,0,0,?,'pancake') ON CONFLICT(month,email,slot) DO UPDATE SET videos=excluded.videos,synced_at=excluded.synced_at,source='pancake'", month, page.Email, page.Slot, videos, now)
-		if err != nil {
+
+		status, lastError := "connected", ""
+		if authFailed {
+			status, lastError = "needs_reconnect", "Pancake từ chối page token"
+		}
+		if _, err := a.db.ExecContext(ctx, "UPDATE pancake_pages SET status=?,last_sync_at=?,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE page_id=?", status, now, lastError, page.PageID); err != nil {
 			return result, err
 		}
-		_, err = a.db.ExecContext(ctx, "UPDATE pancake_pages SET status='connected',last_sync_at=?,last_error='',updated_at=CURRENT_TIMESTAMP WHERE page_id=?", now, page.PageID)
-		if err != nil {
+	}
+
+	if _, err := a.db.ExecContext(ctx, `UPDATE channel_stats SET videos=0,synced_at=?,source='pancake'
+		WHERE month=? AND slot=1 AND source='pancake'`, now, month); err != nil {
+		return result, err
+	}
+	for email, videos := range videoCounts {
+		if _, err := a.db.ExecContext(ctx, `INSERT INTO channel_stats(month,email,slot,videos,views,followers,synced_at,source)
+			VALUES(?,?,1,?,0,0,?,'pancake') ON CONFLICT(month,email,slot)
+			DO UPDATE SET videos=excluded.videos,synced_at=excluded.synced_at,source='pancake'`, month, email, videos, now); err != nil {
 			return result, err
 		}
-		result.Synced++
 	}
 	return result, nil
 }
 
-func pancakeCountPosts(ctx context.Context, pageID, pageToken string, since, until int64) (int, error) {
-	total := 0
-	for pageNumber := 1; pageNumber <= 20; pageNumber++ {
-		var root any
+func pancakeFetchMetric(ctx context.Context, pageID, endpoint string, query url.Values, rateLimit *pancakePageRateLimiter) (any, error) {
+	if err := rateLimit.wait(ctx); err != nil {
+		return nil, err
+	}
+	var root any
+	path := "/public_api/v1/pages/" + url.PathEscape(pageID) + "/" + endpoint
+	if err := pancakeRequest(ctx, http.MethodGet, path, query, &root); err != nil {
+		return nil, err
+	}
+	if m, ok := root.(map[string]any); ok {
+		if success, ok := m["success"].(bool); ok && !success {
+			return nil, errors.New("Pancake trả success=false")
+		}
+	}
+	return root, nil
+}
+
+func pancakeFetchPosts(ctx context.Context, pageID, pageToken string, since, until int64, rateLimit *pancakePageRateLimiter) (any, error) {
+	posts := []any{}
+	total := -1
+	// ponytail: cap at 30,000 posts/month; raise if a page exceeds that volume.
+	for pageNumber := 1; pageNumber <= 1000; pageNumber++ {
+		if err := rateLimit.wait(ctx); err != nil {
+			return nil, err
+		}
 		query := url.Values{
 			"page_access_token": {pageToken},
 			"since":             {fmt.Sprint(since)},
 			"until":             {fmt.Sprint(until)},
 			"page_number":       {fmt.Sprint(pageNumber)},
-			"page_size":         {"100"},
+			"page_size":         {"30"},
 		}
-		if err := pancakeRequest(ctx, http.MethodGet, "/public_api/v1/pages/"+url.PathEscape(pageID)+"/posts", query, &root); err != nil {
-			return total, err
+		var root any
+		path := "/public_api/v1/pages/" + url.PathEscape(pageID) + "/posts"
+		if err := pancakeRequest(ctx, http.MethodGet, path, query, &root); err != nil {
+			return nil, err
 		}
-		items := firstArray(root, "posts", "data")
-		if len(items) == 0 {
-			break
+		if m, ok := root.(map[string]any); ok {
+			if success, ok := m["success"].(bool); ok && !success {
+				return nil, errors.New("Pancake trả success=false")
+			}
+			if total < 0 {
+				if n, ok := m["total"].(float64); ok {
+					total = int(n)
+				}
+			}
 		}
-		total += len(items)
-		if len(items) < 100 {
-			break
+		items := firstArray(root, "posts")
+		for _, item := range items {
+			posts = append(posts, sanitizePancakePost(item))
+		}
+		if total >= 0 && len(posts) >= total || len(items) < 30 {
+			return map[string]any{"total": len(posts), "posts": posts}, nil
 		}
 	}
-	return total, nil
+	return nil, errors.New("Pancake trả quá 30000 bài trong kỳ")
+}
+
+func sanitizePancakePost(value any) any {
+	switch x := value.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for key, child := range x {
+			switch strings.ToLower(key) {
+			case "message", "original_message", "from", "customer_name", "email", "phone":
+				continue
+			}
+			out[key] = sanitizePancakePost(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, child := range x {
+			out[i] = sanitizePancakePost(child)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func sanitizePancakeFeedback(value any) any {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+	feedback, ok := m["customer_feedback"].([]any)
+	if !ok {
+		return value
+	}
+	ratingCounts := map[string]int{}
+	for _, item := range feedback {
+		if row, ok := item.(map[string]any); ok {
+			if rating, ok := row["rate"].(float64); ok {
+				ratingCounts[strconv.Itoa(int(rating))]++
+			}
+		}
+	}
+	clean := make(map[string]any, len(m)+2)
+	for key, child := range m {
+		if key != "customer_feedback" {
+			clean[key] = child
+		}
+	}
+	clean["feedback_count"] = len(feedback)
+	clean["feedback_rating_counts"] = ratingCounts
+	return clean
+}
+
+func (a *api) savePancakeMetric(ctx context.Context, pageID, month, endpoint string, payload any, metricErr error, syncedAt string) error {
+	if endpoint == "posts" {
+		payload = sanitizePancakePost(payload)
+	} else if endpoint == "customer_feedbacks" || strings.HasPrefix(endpoint, "customer_feedbacks_part_") {
+		payload = sanitizePancakeFeedback(payload)
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	errorText := ""
+	if metricErr != nil {
+		errorText = pancakeStatusError(metricErr)
+	}
+	_, err = a.db.ExecContext(ctx, `INSERT INTO pancake_metric_snapshots(page_id,month,endpoint,payload_json,synced_at,error)
+		VALUES(?,?,?,?,?,?) ON CONFLICT(page_id,month,endpoint) DO UPDATE SET
+		payload_json=excluded.payload_json,synced_at=excluded.synced_at,error=excluded.error`,
+		pageID, month, endpoint, string(raw), syncedAt, errorText)
+	return err
+}
+
+func pancakeVideoPostCount(value any) int {
+	posts := firstArray(value, "posts")
+	count := 0
+	for _, item := range posts {
+		if post, ok := item.(map[string]any); ok && strings.EqualFold(stringValue(post["type"]), "video") {
+			count++
+		}
+	}
+	return count
 }
 
 func firstArray(value any, keys ...string) []any {
@@ -740,13 +1033,13 @@ func (a *api) pancakeAutoSync() {
 	run := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		result, err := a.syncPancake(ctx, time.Now().Format("2006-01"))
+		result, err := a.syncPancake(ctx, pancakeCurrentMonth())
 		if err != nil {
 			log.Printf("Pancake sync failed: %v", err)
 			return
 		}
 		if result.Found > 0 {
-			log.Printf("Pancake sync month %s: %d/%d pages", result.Month, result.Synced, result.Found)
+			log.Printf("Pancake sync month %s: %d metrics saved, %d failed across %d pages", result.Month, result.Synced, result.Failed, result.Found)
 		}
 	}
 	run()

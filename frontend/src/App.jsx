@@ -178,6 +178,15 @@ function App() {
     } catch (e) { setError(e.message); throw e }
   }
 
+  const unmapPancakeChannel = async pageID => {
+    setError('')
+    try {
+      const result = await request('/admin/pancake/pages/'+encodeURIComponent(pageID)+'/assignment', { method:'DELETE' })
+      await load()
+      return result
+    } catch (e) { setError(e.message); throw e }
+  }
+
   const logout = async () => {
     if (!demoMode) { try { await request('/logout', { method:'POST', body:'{}' }) } catch {} }
     setData(null)
@@ -274,7 +283,7 @@ function App() {
           {page === 'shifts' && <ShiftPage data={data}/> }
           {page === 'calendar' && <CalendarPage data={data}/>}
           {page === 'payroll' && <PayrollPage data={data} onCompute={computePayroll} demo={demoMode}/>}
-          {page === 'channels' && <ChannelPage data={data} demo={demoMode} onConnect={connectPancake} onSync={syncPancake} onMap={mapPancakeChannel}/>}
+          {page === 'channels' && <ChannelPage data={data} demo={demoMode} onConnect={connectPancake} onSync={syncPancake} onMap={mapPancakeChannel} onUnmap={unmapPancakeChannel}/>}
           {page === 'admin' && <AdminPage data={data}/>}
         </div>
       </main>
@@ -510,35 +519,85 @@ function compactNumber(value) {
   return n.toLocaleString('vi-VN')
 }
 
-function ChannelPage({data,demo,onConnect,onSync,onMap}) {
+function pancakeEndpointLabel(name) {
+  return ({
+    pages:'Thống kê page', pages_campaigns:'Chiến dịch quảng cáo', ads_by_id:'Hiệu suất quảng cáo theo quảng cáo', ads_by_time:'Hiệu suất quảng cáo theo thời gian',
+    customer_engagements:'Tương tác khách hàng theo ngày', customer_engagements_hourly:'Tương tác khách hàng theo giờ', customer_feedbacks:'Đánh giá khách hàng',
+    customer_feedbacks_part_1:'Đánh giá khách hàng · phần 1', customer_feedbacks_part_2:'Đánh giá khách hàng · phần 2',
+    tags:'Thống kê theo tag', users:'Hiệu suất nhân sự', posts:'Bài đăng và tương tác',
+  })[name] || name
+}
+
+function pancakeSeriesTotal(pages, field) {
+  return pages.reduce((sum,page)=>(page.metrics?.pages?.data||[]).reduce((n,row)=>n+Number(row[field]||0),sum),0)
+}
+
+function pancakePostTotal(pages, type) {
+  return pages.reduce((sum,page)=>sum+((page.metrics?.posts?.posts||[]).filter(post=>!type||post.type===type).length),0)
+}
+
+function pancakePostFieldTotal(pages, field) {
+  return pages.reduce((sum,page)=>(page.metrics?.posts?.posts||[]).reduce((n,post)=>n+Number(post[field]||0),sum),0)
+}
+
+function pancakeReactionTotal(pages) {
+  return pages.reduce((sum,page)=>(page.metrics?.posts?.posts||[]).reduce((n,post)=>n+Object.values(post.reactions||{}).reduce((r,v)=>r+Number(v||0),0),sum),0)
+}
+
+function ChannelPage({data,demo,onConnect,onSync,onMap,onUnmap}) {
   const [connectOpen,setConnectOpen] = useState(false)
   const [syncing,setSyncing] = useState(false)
+  const [syncResult,setSyncResult] = useState(null)
+  const [syncError,setSyncError] = useState('')
   const stats=data.channelStats||[]
   const pancake=data.pancake||{pages:[],configured:0,connected:0,needs_reconnect:0}
+  const metricPages=data.pancakeMetrics||[]
+  const assignedMetrics=metricPages.filter(page=>page.email)
   const isAdmin=!demo && Boolean(data.me?.isAdmin||data.me?.caps?.includes('channel.sync'))
   const total=(key)=>stats.reduce((sum,row)=>sum+Number(row[key]||0),0)
-  const views=demo?2840000:total('views'), followers=demo?12480:total('followers'), videos=demo?86:total('videos')
+  const hasPosts=assignedMetrics.some(page=>page.metrics?.posts&&!page.errors?.posts)
+  const hasPageStats=assignedMetrics.some(page=>page.metrics?.pages&&!page.errors?.pages)
+  const videos=demo?86:(hasPosts?pancakePostTotal(assignedMetrics,'video'):total('videos'))
+  const views=demo?compactNumber(2840000):(total('views')?compactNumber(total('views')):'—')
+  const followers=demo?compactNumber(12480):(total('followers')?compactNumber(total('followers')):'—')
   const runSync=async()=>{
-    try { setSyncing(true); await onSync() } finally { setSyncing(false) }
+    setSyncError('')
+    try { setSyncing(true); setSyncResult(await onSync()) } catch (e) { setSyncError(e.message) } finally { setSyncing(false) }
   }
+  const newCustomers=demo?0:pancakeSeriesTotal(assignedMetrics,'new_customer_count')
+  const newInboxes=demo?0:pancakeSeriesTotal(assignedMetrics,'new_inbox_count')
+  const phoneNumbers=demo?0:pancakeSeriesTotal(assignedMetrics,'phone_number_count')
+  const comments=demo?0:pancakePostFieldTotal(assignedMetrics,'comment_count')
+  const interactions=demo?0:pancakeReactionTotal(assignedMetrics)
   return <div>
-    <PageHeading eyebrow="HIỆU SUẤT KÊNH" title="Chỉ số kênh" description="Theo dõi số liệu Pancake theo tháng." action={isAdmin?<button className="secondary-button" onClick={runSync} disabled={syncing}><Icon name="calendar"/> {syncing?'Đang đồng bộ…':'Đồng bộ Pancake'}</button>:<button className="secondary-button" disabled><Icon name="calendar"/> Tháng {data.currentMonth||'hiện tại'}</button>}/>
+    <PageHeading eyebrow="HIỆU SUẤT KÊNH" title="Chỉ số kênh" description="Số liệu page và bài đăng theo tháng từ API Pancake." action={isAdmin?<button className="secondary-button" onClick={runSync} disabled={syncing}><Icon name="calendar"/> {syncing?'Đang đồng bộ…':'Đồng bộ Pancake'}</button>:<button className="secondary-button" disabled><Icon name="calendar"/> Tháng {data.currentMonth||'hiện tại'}</button>}/>
     {isAdmin && <section className="panel pancake-panel">
       <div className="panel-heading"><div><span className="eyebrow">TÍCH HỢP PANCAKE</span><h2>{pancake.configured?(pancake.connected+'/'+pancake.configured+' page đã kết nối'):'Chưa kết nối Pancake'}</h2></div><button className="primary-button" onClick={()=>setConnectOpen(true)}>Cập nhật token</button></div>
-      <p className="muted pancake-help">{pancake.needs_reconnect?(pancake.needs_reconnect+' page cần kết nối lại. '):''}Token User chỉ dùng để lấy page và cấp lại page token khi cần; dữ liệu sync định kỳ dùng page token đã lưu.</p>
-      {pancake.pages?.length>0 && <div className="pancake-pages">{pancake.pages.map(page=><PancakePageRow key={page.page_id} page={page} users={data.users||[]} onMap={onMap}/>)}</div>}
+      <p className="muted pancake-help">{pancake.needs_reconnect?(pancake.needs_reconnect+' page cần kết nối lại. '):''}Gán nhân sự trực tiếp theo page ID; không giới hạn số page mỗi người. “Gỡ gán” chỉ bỏ người phụ trách, token và lịch sử số liệu vẫn được giữ.</p>
+      {syncError&&<div className="form-error pancake-sync-result">Đồng bộ thất bại: {syncError}</div>}
+      {syncResult&&<div className="pancake-sync-result" role="status"><b>{syncResult.month}: {syncResult.found} page · {syncResult.synced} nhóm API đã lưu · {syncResult.failed} lỗi</b>{syncResult.errors?.length>0&&<ul>{syncResult.errors.slice(0,8).map((e,i)=><li key={i}>{e}</li>)}</ul>}</div>}
+      {pancake.pages?.length>0 && <div className="pancake-pages">{pancake.pages.map(page=><PancakePageRow key={page.page_id} page={page} users={data.users||[]} onMap={onMap} onUnmap={onUnmap}/>)}</div>}
     </section>}
     <div className="metric-grid">
-      <Metric label="Lượt xem" value={compactNumber(views)} delta={demo?'+18.2%':''} color="purple" icon="◉"/>
-      <Metric label="Người theo dõi" value={compactNumber(followers)} delta={demo?'+9.6%':''} color="green" icon="♙"/>
-      <Metric label="Video đã đăng" value={compactNumber(videos)} delta={demo?'+14.1%':''} color="orange" icon="▶"/>
-      <Metric label="Tỷ lệ tương tác" value={demo?'6.42%':'—'} delta={demo?'+1.2%':'Chưa có field tương ứng'} color="blue" icon="⌁"/>
+      <Metric label="Lượt xem" value={views} delta={views==='—'?'Chưa có trong schema API Pancake':''} color="purple" icon="◉"/>
+      <Metric label="Người theo dõi" value={followers} delta={followers==='—'?'Chưa có trong schema API Pancake':''} color="green" icon="♙"/>
+      <Metric label="Video đã đăng" value={hasPosts||demo||total('videos')?compactNumber(videos):'—'} delta="Bài có type video" color="orange" icon="▶"/>
+      <Metric label="Khách mới" value={hasPageStats||demo?compactNumber(newCustomers):'—'} delta="Thống kê page" color="blue" icon="♙"/>
+      <Metric label="Hội thoại mới" value={hasPageStats||demo?compactNumber(newInboxes):'—'} delta="Thống kê page" color="purple" icon="⌁"/>
+      <Metric label="Số điện thoại" value={hasPageStats||demo?compactNumber(phoneNumbers):'—'} delta="Thống kê page" color="green" icon="☎"/>
+      <Metric label="Bình luận bài đăng" value={hasPosts||demo?compactNumber(comments):'—'} delta="Bài đăng đã lấy" color="orange" icon="☰"/>
+      <Metric label="Lượt cảm xúc" value={hasPosts||demo?compactNumber(interactions):'—'} delta="Reaction trên bài đăng" color="blue" icon="♥"/>
     </div>
-    <section className="panel channel-panel"><div className="panel-heading"><div><span className="eyebrow">TĂNG TRƯỞNG</span><h2>Tổng hợp tháng {data.currentMonth||'hiện tại'}</h2></div><button className="dots-button"><Icon name="more"/></button></div><div className="chart-legend"><span><i className="legend-mark purple-mark"/>Lượt xem</span><span><i className="legend-mark coral-mark"/>Người theo dõi</span></div>{demo?<><div className="chart-area">{[35,53,42,68,56,78,62,91,76,86,70,100,81,91,72,88,67,95,80,100].map((h,i)=><i key={i} style={{height:h+'%'}}/>)}</div><div className="chart-labels"><span>Tuần 1</span><span>Tuần 2</span><span>Tuần 3</span><span>Tuần 4</span></div></>:<div className="channel-empty">{stats.length?'Đã có dữ liệu tổng hợp. Biểu đồ theo tuần sẽ mở khi lưu số liệu theo ngày.':'Chưa có số liệu thống kê cho kỳ này.'}</div>}</section>
-    {!demo && <section className="panel table-panel"><div className="table-toolbar"><h2>Kênh đã cấu hình</h2><span>{data.channels?.length||0} kênh</span></div><div className="simple-table channel-mapping-table"><div className="table-head"><span>NHÂN SỰ</span><span>KÊNH</span><span>PAGE ID</span><span>NỀN TẢNG</span><span>VỊ TRÍ</span><span>TRẠNG THÁI</span></div>{(data.channels||[]).map(c=>{const u=data.users?.find(x=>x.email===c.email);return <div className="table-row" key={c.email+'-'+c.slot}><span className="title-cell"><Avatar user={u}/><b>{u?.name||c.email}</b></span><span>{c.page_name||'Đã liên kết'}</span><code className="pancake-page-id">{c.page_id||'—'}</code><span>{c.platform}</span><span>{c.slot===2?'Kênh 2':'Kênh chính'}</span><Status value="Đang hoạt động"/></div>})}</div></section>}
-    <p className="muted channel-note">{demo?'Số liệu minh hoạ.':stats.length?'Video count được đồng bộ từ Pancake. Views/follower chỉ hiện nếu đã có từ nguồn trước đó.':'Chưa có ChannelStats; hãy kết nối Pancake và gán page vào kênh.'}</p>
+    {!demo&&<section className="panel pancake-metrics-panel"><div className="table-toolbar"><h2>Số liệu chi tiết theo page</h2><span>{metricPages.length} page · {data.currentMonth||'tháng hiện tại'}</span></div>{metricPages.length?<div className="pancake-metric-pages">{metricPages.map(page=><PancakeMetricsPage key={page.page_id} page={page} users={data.users||[]}/>)}</div>:<div className="channel-empty">Chưa có page Pancake để đồng bộ.</div>}<p className="muted channel-note">Pancake OpenAPI hiện trả số liệu page, tương tác, tag, nhân sự, feedback, quảng cáo và bài đăng. Lượt xem video/follower không có trong các schema thống kê này; các nhóm số liệu chi tiết được lưu theo page ID.</p></section>}
+    {!demo && <section className="panel table-panel"><div className="table-toolbar"><h2>Kênh nguồn khác</h2><span>{data.channels?.length||0} kênh</span></div><div className="simple-table channel-mapping-table"><div className="table-head"><span>NHÂN SỰ</span><span>KÊNH</span><span>PAGE ID</span><span>NỀN TẢNG</span><span>VỊ TRÍ</span><span>TRẠNG THÁI</span></div>{(data.channels||[]).map(c=>{const u=data.users?.find(x=>x.email===c.email);return <div className="table-row" key={c.email+'-'+c.slot}><span className="title-cell"><Avatar user={u}/><b>{u?.name||c.email}</b></span><span>{c.page_name||'Đã liên kết'}</span><code className="pancake-page-id">{c.page_id||'—'}</code><span>{c.platform}</span><span>{c.slot===2?'Kênh 2':'Kênh chính'}</span><Status value="Đang hoạt động"/></div>})}</div></section>}
     {connectOpen && <PancakeConnectModal onClose={()=>setConnectOpen(false)} onConnect={onConnect}/>}
   </div>
+}
+
+function PancakeMetricsPage({page,users}) {
+  const endpointNames=Object.keys(page.metrics||{}).sort()
+  const person=users.find(user=>user.email===page.email)?.name||page.email||'Chưa gán nhân sự'
+  return <details className="pancake-metric-page"><summary><span><b>{page.page_name||page.page_id}</b><small>{page.platform||'pancake'} · {person} · ID {page.page_id}</small></span><span>{page.last_sync_at?'Đồng bộ '+new Date(page.last_sync_at).toLocaleString('vi-VN'):''}</span></summary><div className="pancake-metric-endpoints">{endpointNames.length?endpointNames.map(name=><details className="pancake-metric-endpoint" key={name}><summary>{pancakeEndpointLabel(name)}{page.errors?.[name]&&<span className="pancake-endpoint-error"> · {page.errors[name]}</span>}</summary><pre>{JSON.stringify(page.metrics[name],null,2)}</pre></details>):<p className="muted">Chưa có dữ liệu; gán page rồi bấm Đồng bộ Pancake.</p>}</div></details>
 }
 
 function PancakeConnectModal({onClose,onConnect}) {
@@ -556,17 +615,22 @@ function PancakeConnectModal({onClose,onConnect}) {
   return <Modal title="Kết nối Pancake" onClose={onClose}><form className="modal-form" onSubmit={submit}><label>User Access Token<input type="password" autoComplete="off" value={token} onChange={e=>setToken(e.target.value)} placeholder="Dán token từ Pancake" required/></label><p className="form-help">Token chỉ gửi tới backend qua phiên đăng nhập. Backend không trả lại hoặc hiển thị token.</p>{error&&<div className="form-error">{error}</div>}{summary&&<div className="connect-result"><b>{summary.found} page tìm thấy</b><span>{summary.reused} giữ nguyên · {summary.created} tạo mới · {summary.refreshed} cấp lại · {summary.not_visible} không còn thấy</span>{result.status?.pages?.map(page=><div className="pancake-result-row" key={page.page_id}><code>{page.page_id}</code><span>{page.page_name||'Page không tên'}</span><Status value={page.status==='connected'?'Đã kết nối':page.status==='needs_reconnect'?'Cần kết nối lại':'Không hiển thị'}/></div>)}</div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Đóng</button><button className="primary-button" disabled={busy}>{busy?'Đang kiểm tra…':'Lấy page ID & kết nối'}</button></div></form></Modal>
 }
 
-function PancakePageRow({page,users,onMap}) {
-  const [email,setEmail]=useState(users[0]?.email||'')
-  const [slot,setSlot]=useState('1')
+function PancakePageRow({page,users,onMap,onUnmap}) {
+  const [email,setEmail]=useState(page.assigned_email||users[0]?.email||'')
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
+  useEffect(()=>setEmail(page.assigned_email||users[0]?.email||''),[page.assigned_email,users])
   const map=async()=>{
     setError('')
     setBusy(true)
-    try { await onMap({page_id:page.page_id,page_name:page.page_name,email,slot:Number(slot)}) } catch (e) { setError(e.message) } finally { setBusy(false) }
+    try { await onMap({page_id:page.page_id,page_name:page.page_name,email}) } catch (e) { setError(e.message) } finally { setBusy(false) }
   }
-  return <div className="pancake-page-row"><div className="pancake-page-copy"><code>{page.page_id}</code><b>{page.page_name||'Page không tên'}</b><small>{page.platform||'pancake'}</small></div><Status value={page.status==='connected'?'Đã kết nối':page.status==='needs_reconnect'?'Cần kết nối lại':page.status==='not_visible'?'Không còn thấy':'Lỗi'}/>{page.mapped?<span className="pancake-mapped">Đã gán kênh</span>:<div className="pancake-page-actions"><select aria-label={'Nhân sự cho '+page.page_id} value={email} onChange={e=>setEmail(e.target.value)}>{users.map(user=><option key={user.email} value={user.email}>{user.name}</option>)}</select><select aria-label={'Slot cho '+page.page_id} value={slot} onChange={e=>setSlot(e.target.value)}><option value="1">Slot 1</option><option value="2">Slot 2</option></select><button className="secondary-button" onClick={map} disabled={busy}>{busy?'Đang lưu…':'Gán kênh'}</button></div>}{error&&<small className="pancake-row-error">{error}</small>}</div>
+  const unmap=async()=>{
+    setError('')
+    setBusy(true)
+    try { await onUnmap(page.page_id) } catch (e) { setError(e.message) } finally { setBusy(false) }
+  }
+  return <div className="pancake-page-row"><div className="pancake-page-copy"><code>{page.page_id}</code><b>{page.page_name||'Page không tên'}</b><small>{page.platform||'pancake'}{page.last_sync_at?' · '+new Date(page.last_sync_at).toLocaleString('vi-VN'):''}</small></div><Status value={page.status==='connected'?'Đã kết nối':page.status==='needs_reconnect'?'Cần kết nối lại':page.status==='not_visible'?'Không còn thấy':'Lỗi'}/><div className="pancake-page-actions"><select aria-label={'Nhân sự cho '+page.page_id} value={email} onChange={e=>setEmail(e.target.value)}>{users.map(user=><option key={user.email} value={user.email}>{user.name}</option>)}</select><button className="secondary-button" onClick={map} disabled={busy||!email}>{busy?'Đang lưu…':page.mapped?'Cập nhật':'Gán kênh'}</button>{page.mapped&&<button className="secondary-button danger" title="Bỏ người phụ trách, giữ kết nối và số liệu Pancake" onClick={unmap} disabled={busy}>Gỡ gán</button>}</div>{page.metric_error_count>0&&<small className="pancake-row-error">{page.metric_error_count} endpoint lỗi — xem chi tiết bên dưới</small>}{page.last_error&&<small className="pancake-row-error">{page.last_error}</small>}{error&&<small className="pancake-row-error">{error}</small>}</div>
 }
 
 function CalendarPage({data}) {

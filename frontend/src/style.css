@@ -94,3 +94,23 @@ input,select,textarea{accent-color:var(--brand)}
 .pancake-result-row{display:flex;align-items:center;gap:8px;font-size:11px}
 .pancake-result-row span{flex:1}
 @media(max-width:760px){.pancake-page-row{align-items:flex-start;flex-wrap:wrap}.pancake-page-copy{min-width:160px}.pancake-page-actions{width:100%;flex-wrap:wrap}.pancake-page-actions select{flex:1;max-width:none}}
+
+.pancake-page-row{flex-wrap:wrap}
+.pancake-page-actions{flex-wrap:wrap}
+.pancake-row-error{position:static;margin-left:auto;flex-basis:100%;text-align:right}
+.pancake-sync-result{margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fcfbff;color:var(--ink-700);font-size:11px;line-height:1.5}
+.pancake-sync-result ul{margin:5px 0 0;padding-left:18px;color:var(--danger)}
+.pancake-metrics-panel{padding:18px 20px}
+.pancake-metric-pages{display:grid;gap:8px}
+.pancake-metric-page,.pancake-metric-endpoint{border:1px solid var(--line-2);border-radius:10px;background:#fff}
+.pancake-metric-page>summary,.pancake-metric-endpoint>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;cursor:pointer;font-size:11px;font-weight:650;list-style-position:inside}
+.pancake-metric-page>summary>span:first-child{display:grid;gap:4px;min-width:0}
+.pancake-metric-page>summary small{font-size:10px;font-weight:400;color:var(--ink-500);overflow-wrap:anywhere}
+.pancake-metric-page>summary>span:last-child{font-size:10px;font-weight:400;color:var(--ink-500);white-space:nowrap}
+.pancake-metric-endpoints{display:grid;gap:7px;padding:0 10px 10px}
+.pancake-metric-endpoint{background:#fcfbff}
+.pancake-metric-endpoint>summary{display:list-item;padding:9px 11px}
+.pancake-endpoint-error{color:var(--danger);font-weight:500}
+.pancake-metric-endpoint pre{max-height:360px;overflow:auto;margin:0 10px 10px;padding:10px;border-radius:8px;background:#f3f2f7;color:var(--ink-700);font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.pancake-metric-endpoints>.muted{padding:5px 4px;font-size:11px}
+@media(max-width:760px){.pancake-metrics-panel{padding:13px}.pancake-metric-page>summary{align-items:flex-start;flex-direction:column}.pancake-page-actions{width:100%}.pancake-page-actions select{flex:1;max-width:none}.pancake-row-error{text-align:left}}

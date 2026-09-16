@@ -93,6 +93,17 @@ CREATE TABLE IF NOT EXISTS pancake_pages (
   last_seen_at TEXT NOT NULL DEFAULT '', last_sync_at TEXT NOT NULL DEFAULT '',
   last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS pancake_page_assignments (
+  page_id TEXT PRIMARY KEY REFERENCES pancake_pages(page_id) ON DELETE CASCADE,
+  email TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS pancake_metric_snapshots (
+  page_id TEXT NOT NULL REFERENCES pancake_pages(page_id) ON DELETE CASCADE,
+  month TEXT NOT NULL, endpoint TEXT NOT NULL, payload_json TEXT NOT NULL DEFAULT '{}',
+  synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, error TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(page_id,month,endpoint)
+);
 `
 
 func openDB(path, adminEmail, adminPassword string) (*sql.DB, error) {
@@ -115,6 +126,17 @@ func openDB(path, adminEmail, adminPassword string) (*sql.DB, error) {
 		return nil, err
 	}
 	if _, err = db.Exec(schema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err = db.Exec(`INSERT OR IGNORE INTO pancake_pages(page_id,page_name,platform,status)
+		SELECT page_id,page_name,platform,'needs_reconnect' FROM channels
+		WHERE lower(platform)='pancake' AND page_id<>''`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err = db.Exec(`INSERT OR IGNORE INTO pancake_page_assignments(page_id,email)
+		SELECT page_id,email FROM channels WHERE lower(platform)='pancake' AND page_id<>'' ORDER BY page_id,email,slot`); err != nil {
 		db.Close()
 		return nil, err
 	}

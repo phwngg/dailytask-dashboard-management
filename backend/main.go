@@ -48,6 +48,7 @@ func main() {
 	mux.HandleFunc("POST /api/admin/pancake/connect", app.protected(app.pancakeConnect))
 	mux.HandleFunc("POST /api/admin/pancake/sync", app.protected(app.pancakeSync))
 	mux.HandleFunc("PUT /api/admin/channels", app.protected(app.mapPancakeChannel))
+	mux.HandleFunc("DELETE /api/admin/pancake/pages/{page_id}/assignment", app.protected(app.unmapPancakeChannel))
 	mux.HandleFunc("GET /api/payroll", app.protected(app.payroll))
 	mux.HandleFunc("POST /api/payroll/compute", app.protected(app.computePayroll))
 	mux.Handle("/", staticFiles(env("STATIC_DIR", "../frontend/dist")))
