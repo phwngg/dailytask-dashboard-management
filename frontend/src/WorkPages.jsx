@@ -63,7 +63,7 @@ function ProgressTrend({progress, fallbackTotal = 0, fallbackCompleted = 0}) {
     const fallbackRate = fallbackTotal ? Math.round(100 * fallbackCompleted / fallbackTotal) : 0
     return <div className="progress-trend-empty"><b>{fallbackTotal ? `${fallbackCompleted}/${fallbackTotal} công việc hoàn thành (${fallbackRate}%)` : 'Chưa có công việc đến hạn trong tuần này.'}</b><span>Biểu đồ sẽ xuất hiện khi có dữ liệu theo tuần.</span></div>
   }
-  const width = 720, height = 240, left = 40, right = 14, top = 18
+  const width = 720, height = 240, left = 40, right = 14, top = 18, bottom = 36
   const chartWidth = width - left - right, chartHeight = height - top - bottom
   const x = index => left + index * (chartWidth / 6)
   const y = rate => top + (100 - rate) * chartHeight / 100
