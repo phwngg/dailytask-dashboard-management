@@ -99,6 +99,8 @@ function App() {
   const [demoMode, setDemoMode] = useState(!import.meta.env.PROD && import.meta.env.VITE_DEMO === 'true')
   const [modal, setModal] = useState('')
   const [query, setQuery] = useState('')
+  const [adminUsers, setAdminUsers] = useState(null)
+  const [adminLoading, setAdminLoading] = useState(false)
 
   const load = async () => {
     if (!import.meta.env.PROD && import.meta.env.VITE_DEMO === 'true') {
@@ -124,6 +126,68 @@ function App() {
   useEffect(() => {
     if (data && page === 'admin' && !data.me?.caps?.includes('users.manage')) navigate('overview', true)
   }, [data,page])
+
+  const refreshAdminUsers = async () => {
+    setAdminLoading(true)
+    try {
+      const users = demoMode
+        ? (adminUsers || data?.users || []).map(user => ({ ...user, active: user.active !== false }))
+        : (await request('/admin/users')).users || []
+      setAdminUsers(users)
+      setData(current => current ? { ...current, users: users.filter(user => user.active !== false) } : current)
+      return users
+    } catch (e) {
+      setError(e.message)
+      throw e
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (page === 'admin' && data?.me?.caps?.includes('users.manage')) void refreshAdminUsers()
+  }, [page, demoMode, data?.me?.email])
+
+  const saveAdminUser = async form => {
+    setError('')
+    try {
+      if (demoMode) {
+        const current = adminUsers || data.users || []
+        const next = form.originalEmail
+          ? current.map(user => user.email === form.originalEmail ? { ...user, name: form.name, role: form.role } : user)
+          : [...current, { email: form.email.toLowerCase(), name: form.name, role: form.role, position: form.position || '', active: true, initials: initials(form.name), color: '#7657e8' }]
+        setAdminUsers(next)
+        setData(currentData => currentData ? { ...currentData, users: next.filter(user => user.active !== false) } : currentData)
+        return
+      }
+      const { originalEmail, ...payload } = form
+      await request(originalEmail ? '/admin/users/' + encodeURIComponent(originalEmail) : '/admin/users', {
+        method: originalEmail ? 'PATCH' : 'POST',
+        body: JSON.stringify(payload),
+      })
+      await refreshAdminUsers()
+    } catch (e) {
+      setError(e.message)
+      throw e
+    }
+  }
+
+  const updateAdminUser = async (email, payload) => {
+    setError('')
+    try {
+      if (demoMode) {
+        const next = (adminUsers || data.users || []).map(user => user.email === email ? { ...user, ...payload } : user)
+        setAdminUsers(next)
+        setData(currentData => currentData ? { ...currentData, users: next.filter(user => user.active !== false) } : currentData)
+        return
+      }
+      await request('/admin/users/' + encodeURIComponent(email), { method: 'PATCH', body: JSON.stringify(payload) })
+      await refreshAdminUsers()
+    } catch (e) {
+      setError(e.message)
+      throw e
+    }
+  }
 
   useEffect(() => {
     const syncRoute = () => {
@@ -304,7 +368,7 @@ function App() {
           {page === 'calendar' && <CalendarPage data={data}/>}
           {page === 'payroll' && <PayrollPage data={data} onCompute={computePayroll} demo={demoMode}/>}
           {page === 'channels' && <ChannelPage data={data} demo={demoMode} onConnect={connectPancake} onSync={syncPancake} onLoadMetrics={loadPancakeMetrics} onMap={mapPancakeChannel} onUnmap={unmapPancakeChannel}/>}
-          {page === 'admin' && <AdminPage data={data}/>}
+          {page === 'admin' && <AdminPage data={data} users={adminUsers || data.users || []} loading={adminLoading} onRefresh={refreshAdminUsers} onSave={saveAdminUser} onUpdate={updateAdminUser}/>}
         </div>
       </main>
       {modal === 'task' && <TaskModal users={data.users || []} me={data.me} onClose={()=>setModal('')} onSave={saveTask}/>}
@@ -375,7 +439,7 @@ function Overview({data,go,onStatus,demo}) {
 }
 
 function Status({value}) {
-  const cls=value==='Đã đăng'||value==='done'?'success':value==='Đang thực hiện'||value==='doing'?'warning':value==='Chưa thực hiện'||value==='todo'?'neutral':'info'
+  const cls=value==='Đã đăng'||value==='done'?'success':value==='Đang thực hiện'||value==='doing'?'warning':value==='Đã khóa'?'danger':value==='Chưa thực hiện'||value==='todo'?'neutral':'info'
   return <span className={'status '+cls}><i/>{value||'Chưa thực hiện'}</span>
 }
 
@@ -585,7 +649,11 @@ function pancakeNumber(value) {
 }
 
 function pancakePostType(post) {
-  return String(post?.type||post?.post_type||post?.content_type||'').toLowerCase()
+  const type=String(post?.type||post?.post_type||post?.content_type||'').toLowerCase()
+  if(type.includes('video')||post?.video_id||post?.video_url||post?.video) return 'video'
+  const attachments=Array.isArray(post?.attachments)?post.attachments:[]
+  if(attachments.some(item=>String(item?.type||item?.media_type||'').toLowerCase().includes('video'))) return 'video'
+  return type
 }
 
 function pancakePostLink(post) {
@@ -1001,8 +1069,67 @@ function CalendarPage({data}) {
   return <div><PageHeading eyebrow="LỊCH SẢN XUẤT" title="Lịch quay & họp" description="Các buổi quay, livestream và cuộc họp đã chuyển từ workbook cũ."/><section className="panel table-panel"><div className="table-toolbar"><h2>Lịch đã lên</h2><span>{entries.length} sự kiện</span></div><div className="simple-table plan-table"><div className="table-head"><span>SỰ KIỆN</span><span>LOẠI</span><span>NGÀY</span><span>GIỜ</span><span>ĐỊA ĐIỂM</span><span>PHỤ TRÁCH</span></div>{entries.map(e=><div className="table-row" key={e.id}><span className="plan-title"><b>{e.title}</b><small>{people(e.attendees)}</small></span><span>{e.kindLabel}</span><span>{e.date||'—'}</span><span>{e.time||'—'}</span><span>{e.location||'—'}</span><span>{data.users?.find(u=>u.email===e.lead)?.name||e.lead||'—'}</span></div>)}</div></section></div>
 }
 
-function AdminPage({data}) {
-  return <div><PageHeading eyebrow="WORKSPACE SETTINGS" title="Quản trị thành viên" description="Quản lý người dùng và quyền truy cập trong workspace." action={<button className="primary-button"><Icon name="plus"/> Mời thành viên</button>}/><div className="summary-strip"><span><b>{data.users?.length||0}</b> thành viên</span><span className="summary-sep"/><span>Quyền truy cập theo vai trò</span></div><section className="panel table-panel"><div className="table-toolbar"><h2>Thành viên workspace</h2><button className="secondary-button">Vai trò & quyền <span>⌄</span></button></div><div className="simple-table admin-table"><div className="table-head"><span>THÀNH VIÊN</span><span>EMAIL</span><span>VAI TRÒ</span><span>TRẠNG THÁI</span><span>THAO TÁC</span></div>{data.users?.map(u=><div className="table-row" key={u.email}><span className="title-cell"><Avatar user={u}/><b>{u.name}</b></span><span>{u.email}</span><span>{u.role==='admin'?'Quản trị viên':'Nhân viên'}</span><Status value={u.active===false?'Đã khóa':'Đang hoạt động'}/><button className="dots-button"><Icon name="more"/></button></div>)}</div></section></div>
+function AdminPage({data,users,loading,onRefresh,onSave,onUpdate}) {
+  const [filter, setFilter] = useState('all')
+  const [search, setSearch] = useState('')
+  const [editor, setEditor] = useState(null)
+  const [showRoles, setShowRoles] = useState(false)
+  const [busyEmail, setBusyEmail] = useState('')
+  const currentEmail = (data.me?.email || '').toLowerCase()
+  const roleLabel = role => role === 'admin' ? 'Quản trị viên' : 'Nhân viên'
+  const counts = {
+    all: users.length,
+    active: users.filter(user => user.active !== false).length,
+    inactive: users.filter(user => user.active === false).length,
+  }
+  const visibleUsers = users.filter(user => {
+    const matchesFilter = filter === 'all' || (filter === 'active' ? user.active !== false : user.active === false)
+    const needle = search.trim().toLowerCase()
+    const matchesSearch = !needle || [user.name, user.email, user.position, roleLabel(user.role)].some(value => String(value || '').toLowerCase().includes(needle))
+    return matchesFilter && matchesSearch
+  })
+  const changeStatus = async user => {
+    if (user.email.toLowerCase() === currentEmail) return
+    const nextActive = user.active === false
+    if (!nextActive && !window.confirm(`Khóa tài khoản ${user.name || user.email}? Người này sẽ không thể đăng nhập.`)) return
+    setBusyEmail(user.email)
+    try { await onUpdate(user.email, { active: nextActive }) } catch {} finally { setBusyEmail('') }
+  }
+
+  return <div className="admin-page">
+    <PageHeading eyebrow="WORKSPACE SETTINGS" title="Quản trị thành viên" description="Thêm người vào workspace, phân vai trò và kiểm soát quyền truy cập." action={<button className="primary-button" onClick={() => setEditor({mode:'create'})}><Icon name="plus"/> Thêm thành viên</button>}/>
+    <div className="summary-strip admin-summary"><span><b>{counts.all}</b> thành viên</span><span className="summary-sep"/><span><b>{counts.active}</b> đang hoạt động</span><span className="summary-sep"/><span><b>{counts.inactive}</b> đã khóa</span><span className="admin-summary-note">Khóa tài khoản không xóa dữ liệu công việc.</span></div>
+    <section className="admin-role-guide panel" id="admin-role-guide" hidden={!showRoles}>
+      <div><span className="eyebrow">QUYỀN DỄ HIỂU</span><h2>Chọn vai trò theo việc người đó cần làm</h2><p>Quản trị viên điều hành workspace. Nhân viên tập trung vào phần việc được giao.</p></div>
+      <div className="admin-role-cards">
+        <article><span className="admin-role-icon purple">⚙</span><div><b>Quản trị viên</b><small>Quản lý thành viên, kế hoạch, lịch, lương và kênh.</small></div></article>
+        <article><span className="admin-role-icon green">✓</span><div><b>Nhân viên</b><small>Xem và cập nhật công việc, kế hoạch và nội dung được giao.</small></div></article>
+      </div>
+    </section>
+    <section className="panel table-panel admin-members-panel">
+      <div className="table-toolbar admin-toolbar"><div><h2>Danh sách thành viên</h2><p>Chỉ người có quyền Quản trị viên mới thấy và thay đổi phần này.</p></div><div className="admin-toolbar-actions"><label className="member-search"><Icon name="search"/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Tìm tên hoặc email" aria-label="Tìm thành viên"/></label><button className="secondary-button" onClick={() => setShowRoles(value => !value)}>{showRoles ? 'Ẩn hướng dẫn' : 'Xem quyền'} <span>⌄</span></button><button className="icon-button" onClick={() => void onRefresh()} disabled={loading} title="Làm mới danh sách" aria-label="Làm mới danh sách">↻</button></div></div>
+      <div className="admin-filters" role="tablist" aria-label="Lọc thành viên">{[['all','Tất cả'],['active','Đang hoạt động'],['inactive','Đã khóa']].map(([key,label]) => <button key={key} className={filter === key ? 'selected' : ''} onClick={() => setFilter(key)} role="tab" aria-selected={filter === key}>{label} <b>{counts[key]}</b></button>)}</div>
+      {loading && <div className="admin-empty"><span className="loader"/> Đang tải danh sách thành viên…</div>}
+      {!loading && <div className="simple-table admin-table"><div className="table-head"><span>THÀNH VIÊN</span><span>EMAIL</span><span>VỊ TRÍ</span><span>VAI TRÒ</span><span>TRẠNG THÁI</span><span>THAO TÁC</span></div>{visibleUsers.map(user => { const isSelf = user.email.toLowerCase() === currentEmail; const busy = busyEmail === user.email; return <div className="table-row" key={user.email}><span className="title-cell"><Avatar user={user}/><b>{user.name || 'Chưa đặt tên'}</b>{isSelf && <small className="self-label">Bạn</small>}</span><span>{user.email}</span><span>{user.position || '—'}</span><span>{roleLabel(user.role)}</span><Status value={user.active === false ? 'Đã khóa' : 'Đang hoạt động'}/><span className="admin-member-actions"><button className="row-action" onClick={() => setEditor({mode:'edit', user, isSelf})} disabled={busy} title="Sửa tên và vai trò">Sửa</button><button className="row-action danger" onClick={() => void changeStatus(user)} disabled={isSelf || busy} title={isSelf ? 'Bạn không thể khóa tài khoản của mình' : user.active === false ? 'Mở khóa tài khoản' : 'Khóa tài khoản'}>{busy ? '…' : user.active === false ? 'Mở khóa' : 'Khóa'}</button></span></div>})}{visibleUsers.length === 0 && <div className="admin-empty">Không tìm thấy thành viên phù hợp.</div>}</div>}
+    </section>
+    {editor && <MemberModal member={editor.mode === 'edit' ? editor.user : null} isSelf={editor.isSelf} onClose={() => setEditor(null)} onSave={async form => { await onSave(form); setEditor(null) }}/>}
+  </div>
+}
+
+function MemberModal({member,isSelf,onClose,onSave}) {
+  const editing = Boolean(member)
+  const [form,setForm] = useState(editing ? { originalEmail:member.email, email:member.email, name:member.name || '', role:member.role || 'staff' } : { name:'', email:'', position:'', role:'staff', password:'' })
+  const [saving,setSaving] = useState(false)
+  const change=(key,value)=>setForm(current=>({...current,[key]:value}))
+  const submit=async event=>{ event.preventDefault(); setSaving(true); try { await onSave(form) } catch {} finally { setSaving(false) } }
+  return <Modal title={editing ? 'Cập nhật thành viên' : 'Thêm thành viên'} onClose={onClose}><form className="modal-form" onSubmit={submit}>
+    <label>Họ và tên<input autoFocus value={form.name} onChange={event=>change('name',event.target.value)} placeholder="Ví dụ: Nguyễn Minh An" required/></label>
+    {editing ? <label>Email đăng nhập<input value={form.email} readOnly/></label> : <label>Email đăng nhập<input type="email" value={form.email} onChange={event=>change('email',event.target.value)} placeholder="ten@congty.vn" required/></label>}
+    {!editing && <label>Vị trí trong team<input value={form.position} onChange={event=>change('position',event.target.value)} placeholder="Ví dụ: Content, Media, Ads"/></label>}
+    <label>Vai trò<select value={form.role} onChange={event=>change('role',event.target.value)} disabled={isSelf}><option value="staff">Nhân viên — làm việc theo phần được giao</option><option value="admin">Quản trị viên — quản lý workspace</option></select>{isSelf && <small className="form-help">Bạn đang đăng nhập bằng tài khoản này nên không thể đổi vai trò tại đây.</small>}</label>
+    {!editing && <label>Mật khẩu tạm thời<input type="password" minLength="8" maxLength="72" value={form.password} onChange={event=>change('password',event.target.value)} placeholder="Ít nhất 8 ký tự" required/><small className="form-help">Gửi mật khẩu này cho thành viên qua kênh riêng.</small></label>}
+    <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Hủy</button><button className="primary-button" disabled={saving}>{saving ? 'Đang lưu…' : editing ? 'Lưu thay đổi' : 'Tạo tài khoản'}</button></div>
+  </form></Modal>
 }
 
 function TaskModal({users,me,onClose,onSave}) {
