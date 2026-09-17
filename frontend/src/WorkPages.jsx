@@ -1,4 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
+import {createPortal} from 'react-dom'
 import {dateWindow, formatVietnamDate, matchesTask, priorityTasks} from './overviewData.js'
 
 export function DetailDialog({title,onClose,children}) {
@@ -115,14 +116,14 @@ function ProgressTrend({progress, fallbackTotal = 0, fallbackCompleted = 0}) {
         <g className="progress-chart-grid">{gridValues.map(value => <g key={value}><line x1={left} x2={width - right} y1={y(value)} y2={y(value)}/><text x={left - 8} y={y(value) + 3}>{value}</text></g>)}</g>
         <g className="progress-chart-bars">{points.map((point, index) => <g key={pointKey(point)}>{barSeries.map(([key, label, color], barIndex) => { const value = Number(point[key] || 0); const barHeight = value ? Math.max(2, chartBottom - y(value)) : 0; return <rect key={key} x={barStart(index) + barIndex * (barWidth + barGap)} y={chartBottom - barHeight} width={barWidth} height={barHeight} rx="2" style={{fill:color}}><title>{label}: {value} · {point.date} → {point.endDate}</title></rect> })}</g>)}</g>
         <polyline className="progress-chart-line content" style={{stroke:contentColor}} points={linePath}/>
-        {points.map((point, index) => <circle className="progress-chart-point content" style={{stroke:contentColor}} key={pointKey(point)} cx={x(index)} cy={y(Number(point.content || 0))} r={activeIndex === index ? 5 : 4} tabIndex="0" role="button" aria-label={`Cần đăng ${point.content || 0} trong tuần ${point.date}`} onMouseEnter={event => updateHoveredPoint(event, index)} onMouseMove={event => updateHoveredPoint(event, index)} onMouseLeave={() => setHoveredPoint(null)} onFocus={() => setHoveredPoint({index})} onBlur={() => setHoveredPoint(null)} onClick={() => activatePoint(index)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); activatePoint(index) } }}><title>Cần đăng: {point.content || 0} · {point.date} → {point.endDate}</title></circle>)}
+        {points.map((point, index) => <circle className="progress-chart-point content" style={{stroke:contentColor}} key={pointKey(point)} cx={x(index)} cy={y(Number(point.content || 0))} r={activeIndex === index ? 5 : 4} tabIndex="0" role="button" aria-label={`Cần đăng ${point.content || 0} trong tuần ${point.date}`} onMouseEnter={event => updateHoveredPoint(event, index)} onMouseMove={event => updateHoveredPoint(event, index)} onMouseLeave={() => setHoveredPoint(null)} onFocus={() => setHoveredPoint({index})} onBlur={() => setHoveredPoint(null)} onClick={() => activatePoint(index)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); activatePoint(index) } }}/>)}
         <g className="progress-chart-days">{points.map((point, index) => <text key={pointKey(point)} x={x(index)} y={height - 10}>{dateLabel(point.date)}</text>)}</g>
       </svg>
-      {hoveredPoint?.x != null && <div className={`progress-point-tooltip ${hoveredPoint.side} ${hoveredPoint.vertical}`} style={{left:`${hoveredPoint.x}px`,top:`${Math.max(8, hoveredPoint.y)}px`}}>
+      {hoveredPoint?.x != null && createPortal(<div className={`progress-point-tooltip ${hoveredPoint.side} ${hoveredPoint.vertical}`} style={{left:`${hoveredPoint.x}px`,top:`${Math.max(8, hoveredPoint.y)}px`}}>
         <b>{active.date} → {active.endDate}</b>
         <span><i className="progress-legend-mark line" style={{backgroundColor:contentColor}}/>Cần đăng <strong>{active.content || 0}</strong></span>
         {barSeries.map(([key, label, color]) => <span key={key}><i className="progress-legend-mark bar" style={{backgroundColor:color}}/>{label} <strong>{active[key] || 0}</strong></span>)}
-      </div>}
+      </div>, document.body)}
     </div>
     <div className="progress-chart-detail" aria-live="polite">
       <div className="progress-chart-detail-heading"><b>{active.date} → {active.endDate}</b><small>{hoveredIndex != null ? 'Đang xem điểm dữ liệu' : selectedIndex != null ? 'Đã chọn điểm dữ liệu' : 'Tuần gần nhất'}</small></div>
