@@ -45,6 +45,15 @@ func TestPlanPaginationFiltersAndStats(t *testing.T) {
 	if groups["Channel A"].Total != 2 || groups["Channel A"].ByStatus["Đã đăng"] != 1 || groups["Channel A"].ByStatus["Chưa thực hiện"] != 1 || groups["Channel B"].Total != 1 || groups["Channel B"].Overdue != 1 {
 		t.Fatalf("grouped channels: %+v", groups)
 	}
+	groupsOnly := httptest.NewRecorder()
+	a.listPlans(groupsOnly, httptest.NewRequest(http.MethodGet, "/api/plans?groupsOnly=1", nil), user{IsAdmin: true})
+	var summary planPage
+	if err := json.Unmarshal(groupsOnly.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if groupsOnly.Code != http.StatusOK || len(summary.Items) != 0 || len(summary.Groups) != 2 || summary.Total != 3 || summary.HasMore {
+		t.Fatalf("groups-only response: status %d, page %+v", groupsOnly.Code, summary)
+	}
 	if page.Items[0].ID != "P2" || page.Items[1].ID != "P1" {
 		t.Fatalf("unstable order: %s, %s", page.Items[0].ID, page.Items[1].ID)
 	}

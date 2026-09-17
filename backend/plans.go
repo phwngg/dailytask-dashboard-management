@@ -170,6 +170,11 @@ func (a *api) listPlans(w http.ResponseWriter, r *http.Request, me user) {
 		return
 	}
 	statusRows.Close()
+	if r.URL.Query().Get("groupsOnly") == "1" {
+		out.Items = []plan{}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
 
 	pageClauses := append([]string(nil), clauses...)
 	pageArgs := append([]any(nil), args...)
