@@ -363,12 +363,17 @@ func (a *api) updateUser(w http.ResponseWriter, r *http.Request, me user) {
 		return
 	}
 	var p struct {
-		Name   *string `json:"name"`
-		Active *bool   `json:"active"`
-		Role   string  `json:"role"`
+		Name     *string `json:"name"`
+		Active   *bool   `json:"active"`
+		Role     string  `json:"role"`
+		Password string  `json:"password"`
 	}
 	if decode(r, &p) != nil {
 		writeError(w, http.StatusBadRequest, "Yêu cầu không hợp lệ")
+		return
+	}
+	if p.Password != "" && (len(p.Password) < 8 || len(p.Password) > 72) {
+		writeError(w, http.StatusBadRequest, "Mật khẩu phải từ 8 đến 72 ký tự")
 		return
 	}
 	email := strings.ToLower(r.PathValue("email"))
@@ -442,6 +447,17 @@ func (a *api) updateUser(w http.ResponseWriter, r *http.Request, me user) {
 	}
 	if p.Role != "" {
 		if _, err = tx.ExecContext(r.Context(), "UPDATE users SET role=? WHERE email=?", p.Role, email); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	if p.Password != "" {
+		hash, hashErr := bcrypt.GenerateFromPassword([]byte(p.Password), bcrypt.DefaultCost)
+		if hashErr != nil {
+			fail(w, hashErr)
+			return
+		}
+		if _, err = tx.ExecContext(r.Context(), "UPDATE users SET password_hash=? WHERE email=?", string(hash), email); err != nil {
 			fail(w, err)
 			return
 		}

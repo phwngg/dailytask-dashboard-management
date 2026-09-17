@@ -113,3 +113,29 @@ func TestLegacyPasswordUpgradesOnLogin(t *testing.T) {
 		t.Fatal("legacy password was not replaced by bcrypt")
 	}
 }
+
+func TestAdminCanResetMemberPassword(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "app.db"), "owner@example.com", "correct-horse-battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("INSERT INTO users(email,name,role,password_hash) VALUES(?,?,?,?)", "member@example.com", "Member", "staff", "old-hash"); err != nil {
+		t.Fatal(err)
+	}
+	a := &api{db: db}
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/users/member@example.com", bytes.NewBufferString(`{"password":"new-member-password"}`))
+	req.SetPathValue("email", "member@example.com")
+	w := httptest.NewRecorder()
+	a.updateUser(w, req, user{Email: "owner@example.com", Caps: []string{"users.manage"}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("reset password: got %d, body %s", w.Code, w.Body.String())
+	}
+	var hash string
+	if err := db.QueryRow("SELECT password_hash FROM users WHERE email=?", "member@example.com").Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte("new-member-password")); err != nil {
+		t.Fatalf("new password was not stored: %v", err)
+	}
+}

@@ -1118,7 +1118,7 @@ function AdminPage({data,users,loading,onRefresh,onSave,onUpdate}) {
 
 function MemberModal({member,isSelf,onClose,onSave}) {
   const editing = Boolean(member)
-  const [form,setForm] = useState(editing ? { originalEmail:member.email, email:member.email, name:member.name || '', role:member.role || 'staff' } : { name:'', email:'', position:'', role:'staff', password:'' })
+  const [form,setForm] = useState(editing ? { originalEmail:member.email, email:member.email, name:member.name || '', role:member.role || 'staff', password:'' } : { name:'', email:'', position:'', role:'staff', password:'' })
   const [saving,setSaving] = useState(false)
   const change=(key,value)=>setForm(current=>({...current,[key]:value}))
   const submit=async event=>{ event.preventDefault(); setSaving(true); try { await onSave(form) } catch {} finally { setSaving(false) } }
@@ -1127,7 +1127,7 @@ function MemberModal({member,isSelf,onClose,onSave}) {
     {editing ? <label>Email đăng nhập<input value={form.email} readOnly/></label> : <label>Email đăng nhập<input type="email" value={form.email} onChange={event=>change('email',event.target.value)} placeholder="ten@congty.vn" required/></label>}
     {!editing && <label>Vị trí trong team<input value={form.position} onChange={event=>change('position',event.target.value)} placeholder="Ví dụ: Content, Media, Ads"/></label>}
     <label>Vai trò<select value={form.role} onChange={event=>change('role',event.target.value)} disabled={isSelf}><option value="staff">Nhân viên — làm việc theo phần được giao</option><option value="admin">Quản trị viên — quản lý workspace</option></select>{isSelf && <small className="form-help">Bạn đang đăng nhập bằng tài khoản này nên không thể đổi vai trò tại đây.</small>}</label>
-    {!editing && <label>Mật khẩu tạm thời<input type="password" minLength="8" maxLength="72" value={form.password} onChange={event=>change('password',event.target.value)} placeholder="Ít nhất 8 ký tự" required/><small className="form-help">Gửi mật khẩu này cho thành viên qua kênh riêng.</small></label>}
+    {editing ? <label>Mật khẩu mới (tùy chọn)<input type="password" minLength="8" maxLength="72" value={form.password} onChange={event=>change('password',event.target.value)} placeholder="Để trống nếu không đổi"/><small className="form-help">Dùng khi cần cấp lại mật khẩu cho thành viên.</small></label> : <label>Mật khẩu tạm thời<input type="password" minLength="8" maxLength="72" value={form.password} onChange={event=>change('password',event.target.value)} placeholder="Ít nhất 8 ký tự" required/><small className="form-help">Gửi mật khẩu này cho thành viên qua kênh riêng.</small></label>}
     <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Hủy</button><button className="primary-button" disabled={saving}>{saving ? 'Đang lưu…' : editing ? 'Lưu thay đổi' : 'Tạo tài khoản'}</button></div>
   </form></Modal>
 }
