@@ -380,6 +380,7 @@ function App() {
 function Login({ onLogin, error, setDemo }) {
   const [email,setEmail] = useState('')
   const [password,setPassword] = useState('')
+  const [forgotMessage,setForgotMessage] = useState('')
   return <div className="login-shell">
     <section className="login-visual">
       <div className="login-brand"><span className="brand-mark">d</span> daily<span className="brand-light">task</span></div>
@@ -391,7 +392,8 @@ function Login({ onLogin, error, setDemo }) {
       <form onSubmit={e=>{e.preventDefault();onLogin(email,password)}}>
         <label>Email hoặc tên đăng nhập<input autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)} placeholder="ten@congty.vn" required/></label>
         <label>Mật khẩu<input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Nhập mật khẩu" required/></label>
-        <div className="form-meta"><label className="checkline"><input type="checkbox"/> Ghi nhớ đăng nhập</label><button type="button" className="text-button" onClick={()=>{}}>Quên mật khẩu?</button></div>
+        <div className="form-meta"><label className="checkline"><input type="checkbox"/> Ghi nhớ đăng nhập</label><button type="button" className="text-button" onClick={()=>setForgotMessage('Hãy liên hệ quản trị viên để cấp lại mật khẩu.')}>Quên mật khẩu?</button></div>
+        {forgotMessage && <div className="form-help">{forgotMessage}</div>}
         {error && <div className="form-error">{error}</div>}
         <button className="primary-button w-full" type="submit">Đăng nhập <Icon name="arrow"/></button>
       </form>
