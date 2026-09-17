@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -163,7 +164,7 @@ func (a *api) listPlans(w http.ResponseWriter, r *http.Request, me user) {
 		pageWhere = " WHERE " + strings.Join(pageClauses, " AND ")
 	}
 	pageArgs = append(pageArgs, limit+1)
-	rows, err := a.db.QueryContext(r.Context(), `SELECT id,channel,month,pillar,content_key,demo_date,post_date,status,message,assignee
+	rows, err := a.db.QueryContext(r.Context(), `SELECT id,channel,month,pillar,content_key,demo_date,post_date,status,message,assignee,reviewed_by,reviewed_at,review_note
 		FROM content_plan`+pageWhere+" ORDER BY post_date DESC,id DESC LIMIT ?", pageArgs...)
 	if err != nil {
 		fail(w, err)
@@ -173,7 +174,7 @@ func (a *api) listPlans(w http.ResponseWriter, r *http.Request, me user) {
 	out.Items = make([]plan, 0, limit)
 	for rows.Next() {
 		var p plan
-		if err := rows.Scan(&p.ID, &p.Channel, &p.Month, &p.Pillar, &p.Key, &p.DemoDate, &p.PostDate, &p.Status, &p.Message, &p.Assignee); err != nil {
+		if err := rows.Scan(&p.ID, &p.Channel, &p.Month, &p.Pillar, &p.Key, &p.DemoDate, &p.PostDate, &p.Status, &p.Message, &p.Assignee, &p.ReviewedBy, &p.ReviewedAt, &p.ReviewNote); err != nil {
 			fail(w, err)
 			return
 		}
@@ -182,6 +183,14 @@ func (a *api) listPlans(w http.ResponseWriter, r *http.Request, me user) {
 	if err := rows.Err(); err != nil {
 		fail(w, err)
 		return
+	}
+	if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" && len(out.Items) == 1 {
+		reviews, err := a.planReviews(r.Context(), id)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		out.Items[0].Reviews = reviews
 	}
 	out.HasMore = len(out.Items) > limit
 	if out.HasMore {
@@ -231,4 +240,22 @@ func planFilter(r *http.Request) ([]string, []any, error) {
 		return nil, nil, errors.New("Ngày bắt đầu phải trước hoặc bằng ngày kết thúc")
 	}
 	return clauses, args, nil
+}
+
+func (a *api) planReviews(ctx context.Context, planID string) ([]planReview, error) {
+	rows, err := a.db.QueryContext(ctx, `SELECT r.id,r.action,r.note,r.actor,coalesce(u.name,r.actor),r.created_at
+		FROM content_plan_reviews r LEFT JOIN users u ON u.email=r.actor WHERE r.plan_id=? ORDER BY r.created_at DESC,r.id DESC`, planID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []planReview{}
+	for rows.Next() {
+		var item planReview
+		if err := rows.Scan(&item.ID, &item.Action, &item.Note, &item.Actor, &item.ActorName, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }

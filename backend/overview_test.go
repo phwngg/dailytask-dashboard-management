@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestOverviewCompleteDatasetAndMemberVisibility(t *testing.T) {
@@ -71,5 +72,45 @@ func TestOverviewCompleteDatasetAndMemberVisibility(t *testing.T) {
 		} else if page.Total != len(plans) {
 			t.Fatal("overview and destination disagree")
 		}
+	}
+}
+
+func TestOverviewAggregateEndpointUsesScopedCounts(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "app.db"), "owner@example.com", "test-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec("INSERT INTO users(email,name,role,password_hash) VALUES('staff@example.com','Staff','staff','unused')"); err != nil {
+		t.Fatal(err)
+	}
+	loc, _ := time.LoadLocation("Asia/Ho_Chi_Minh")
+	today := time.Now().In(loc).Format("2006-01-02")
+	if _, err = db.Exec("INSERT INTO tasks(id,title,assignee,due_date,status) VALUES('late','Late','owner@example.com',?,'todo'),('staff','Staff','staff@example.com',?,'todo')", today, today); err != nil {
+		t.Fatal(err)
+	}
+	a := &api{db: db}
+	w := httptest.NewRecorder()
+	a.overview(w, httptest.NewRequest(http.MethodGet, "/api/overview", nil), user{Email: "owner@example.com", IsAdmin: true, IsLeader: true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("overview: %d %s", w.Code, w.Body.String())
+	}
+	var summary overviewSummary
+	if err = json.Unmarshal(w.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.Metrics.Today != 2 || len(summary.Tasks) != 2 {
+		t.Fatalf("admin summary: %+v", summary)
+	}
+	w = httptest.NewRecorder()
+	a.overview(w, httptest.NewRequest(http.MethodGet, "/api/overview?assignee=owner@example.com", nil), user{Email: "staff@example.com", Caps: []string{"plan.view"}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("staff overview: %d %s", w.Code, w.Body.String())
+	}
+	if err = json.Unmarshal(w.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.Metrics.Today != 1 || len(summary.Tasks) != 1 || summary.Tasks[0].Assignee != "staff@example.com" {
+		t.Fatalf("staff summary: %+v", summary)
 	}
 }

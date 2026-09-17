@@ -184,7 +184,7 @@ func (a *api) planPreview(ctx context.Context, me user) ([]plan, error) {
 	if !me.IsAdmin && !hasCap(me.Caps, "plan.view") {
 		return []plan{}, nil
 	}
-	query := "SELECT id,channel,month,pillar,content_key,demo_date,post_date,status,message,assignee FROM content_plan"
+	query := "SELECT id,channel,month,pillar,content_key,demo_date,post_date,status,message,assignee,reviewed_by,reviewed_at,review_note FROM content_plan"
 	args := []any{}
 	if !me.IsLeader {
 		query += " WHERE assignee=?"
@@ -198,7 +198,7 @@ func (a *api) planPreview(ctx context.Context, me user) ([]plan, error) {
 	out := []plan{}
 	for rows.Next() {
 		var p plan
-		if err := rows.Scan(&p.ID, &p.Channel, &p.Month, &p.Pillar, &p.Key, &p.DemoDate, &p.PostDate, &p.Status, &p.Message, &p.Assignee); err != nil {
+		if err := rows.Scan(&p.ID, &p.Channel, &p.Month, &p.Pillar, &p.Key, &p.DemoDate, &p.PostDate, &p.Status, &p.Message, &p.Assignee, &p.ReviewedBy, &p.ReviewedAt, &p.ReviewNote); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

@@ -53,17 +53,30 @@ type task struct {
 	ScheduleID string  `json:"schedule_id"`
 }
 
+type planReview struct {
+	ID        int64  `json:"id"`
+	Action    string `json:"action"`
+	Note      string `json:"note"`
+	Actor     string `json:"actor"`
+	ActorName string `json:"actor_name"`
+	CreatedAt string `json:"created_at"`
+}
+
 type plan struct {
-	ID       string `json:"id"`
-	Channel  string `json:"channel"`
-	Month    string `json:"month"`
-	Pillar   string `json:"pillar"`
-	Key      string `json:"key"`
-	DemoDate string `json:"demo_date"`
-	PostDate string `json:"post_date"`
-	Status   string `json:"status"`
-	Message  string `json:"message"`
-	Assignee string `json:"assignee"`
+	ID         string       `json:"id"`
+	Channel    string       `json:"channel"`
+	Month      string       `json:"month"`
+	Pillar     string       `json:"pillar"`
+	Key        string       `json:"key"`
+	DemoDate   string       `json:"demo_date"`
+	PostDate   string       `json:"post_date"`
+	Status     string       `json:"status"`
+	Message    string       `json:"message"`
+	Assignee   string       `json:"assignee"`
+	ReviewedBy string       `json:"reviewed_by,omitempty"`
+	ReviewedAt string       `json:"reviewed_at,omitempty"`
+	ReviewNote string       `json:"review_note,omitempty"`
+	Reviews    []planReview `json:"reviews,omitempty"`
 }
 
 type channelMapping struct {

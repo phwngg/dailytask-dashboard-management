@@ -71,17 +71,27 @@ func (a *api) createTask(w http.ResponseWriter, r *http.Request, me user) {
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
 }
 
+type taskPatch struct {
+	Title    *string  `json:"title"`
+	Assignee *string  `json:"assignee"`
+	Due      *string  `json:"due"`
+	DueDate  *string  `json:"due_date"`
+	Priority *string  `json:"priority"`
+	Status   *string  `json:"status"`
+	KPIKey   *string  `json:"kpi_key"`
+	Qty      *float64 `json:"qty"`
+}
+
 func (a *api) updateTask(w http.ResponseWriter, r *http.Request, me user) {
 	id := r.PathValue("id")
-	var p struct {
-		Status string `json:"status"`
-	}
-	if decode(r, &p) != nil || (p.Status != "todo" && p.Status != "doing" && p.Status != "done") {
-		writeError(w, http.StatusBadRequest, "Trạng thái không hợp lệ")
+	var p taskPatch
+	if decode(r, &p) != nil || (p.Title == nil && p.Assignee == nil && p.Due == nil && p.DueDate == nil && p.Priority == nil && p.Status == nil && p.KPIKey == nil && p.Qty == nil) {
+		writeError(w, http.StatusBadRequest, "Không có nội dung thay đổi")
 		return
 	}
-	var assignee string
-	err := a.db.QueryRowContext(r.Context(), "SELECT assignee FROM tasks WHERE id=?", id).Scan(&assignee)
+	var current task
+	err := a.db.QueryRowContext(r.Context(), "SELECT id,title,assignee,due,due_date,priority,status,kpi_key,qty,done_at,schedule_id FROM tasks WHERE id=?", id).
+		Scan(&current.ID, &current.Title, &current.Assignee, &current.Due, &current.DueDate, &current.Priority, &current.Status, &current.KPIKey, &current.Qty, &current.DoneAt, &current.ScheduleID)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, "Không tìm thấy công việc")
 		return
@@ -90,20 +100,100 @@ func (a *api) updateTask(w http.ResponseWriter, r *http.Request, me user) {
 		fail(w, err)
 		return
 	}
-	if !me.IsLeader && !strings.EqualFold(assignee, me.Email) {
+	if !me.IsLeader && !strings.EqualFold(current.Assignee, me.Email) {
 		writeError(w, http.StatusForbidden, "Không có quyền sửa công việc này")
 		return
 	}
-	doneAt := ""
-	if p.Status == "done" {
-		doneAt = time.Now().UTC().Format(time.RFC3339)
+	if p.Status != nil && *p.Status != "todo" && *p.Status != "doing" && *p.Status != "done" {
+		writeError(w, http.StatusBadRequest, "Trạng thái không hợp lệ")
+		return
 	}
-	_, err = a.db.ExecContext(r.Context(), "UPDATE tasks SET status=?,done_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", p.Status, doneAt, id)
+	if p.DueDate != nil && *p.DueDate != "" {
+		if _, err := time.Parse("2006-01-02", *p.DueDate); err != nil {
+			writeError(w, http.StatusBadRequest, "Ngày đến hạn không hợp lệ")
+			return
+		}
+	}
+	if p.Assignee != nil {
+		assignee := strings.ToLower(strings.TrimSpace(*p.Assignee))
+		if !me.IsLeader && !strings.EqualFold(assignee, me.Email) {
+			writeError(w, http.StatusForbidden, "Không có quyền giao việc cho người khác")
+			return
+		}
+		var active int
+		if a.db.QueryRowContext(r.Context(), "SELECT active FROM users WHERE email=?", assignee).Scan(&active) != nil || active != 1 {
+			writeError(w, http.StatusBadRequest, "Người nhận việc không hợp lệ")
+			return
+		}
+		current.Assignee = assignee
+	}
+	if p.Title != nil {
+		current.Title = strings.TrimSpace(*p.Title)
+		if current.Title == "" {
+			writeError(w, http.StatusBadRequest, "Thiếu tiêu đề công việc")
+			return
+		}
+	}
+	if p.Due != nil {
+		current.Due = strings.TrimSpace(*p.Due)
+	}
+	if p.DueDate != nil {
+		current.DueDate = strings.TrimSpace(*p.DueDate)
+	}
+	if p.Priority != nil {
+		current.Priority = strings.TrimSpace(*p.Priority)
+	}
+	if p.KPIKey != nil {
+		current.KPIKey = strings.TrimSpace(*p.KPIKey)
+	}
+	if p.Qty != nil {
+		if *p.Qty <= 0 {
+			writeError(w, http.StatusBadRequest, "Số lượng phải lớn hơn 0")
+			return
+		}
+		current.Qty = *p.Qty
+	}
+	if p.Status != nil {
+		current.Status = *p.Status
+		if current.Status == "done" {
+			current.DoneAt = time.Now().UTC().Format(time.RFC3339)
+		} else {
+			current.DoneAt = ""
+		}
+	}
+	_, err = a.db.ExecContext(r.Context(), `UPDATE tasks SET title=?,assignee=?,due=?,due_date=?,priority=?,status=?,kpi_key=?,qty=?,done_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, current.Title, current.Assignee, current.Due, current.DueDate, current.Priority, current.Status, current.KPIKey, current.Qty, current.DoneAt, id)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "status": p.Status})
+	writeJSON(w, http.StatusOK, current)
+}
+
+func (a *api) deleteTask(w http.ResponseWriter, r *http.Request, me user) {
+	if !me.IsLeader {
+		writeError(w, http.StatusForbidden, "Chỉ quản lý mới có quyền xóa công việc")
+		return
+	}
+	res, err := a.db.ExecContext(r.Context(), "DELETE FROM tasks WHERE id=?", r.PathValue("id"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		writeError(w, http.StatusNotFound, "Không tìm thấy công việc")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func validPlanStatus(status string) bool {
+	switch status {
+	case "Chưa thực hiện", "Đang thực hiện", "Chờ duyệt", "Yêu cầu sửa", "Đã duyệt", "Đã đăng":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *api) createPlan(w http.ResponseWriter, r *http.Request, me user) {
@@ -121,11 +211,24 @@ func (a *api) createPlan(w http.ResponseWriter, r *http.Request, me user) {
 	if p.Status == "" {
 		p.Status = "Chưa thực hiện"
 	}
+	if !validPlanStatus(p.Status) {
+		writeError(w, http.StatusBadRequest, "Trạng thái nội dung không hợp lệ")
+		return
+	}
+	if !me.IsLeader && (p.Status == "Chờ duyệt" || p.Status == "Đã duyệt" || p.Status == "Đã đăng") {
+		writeError(w, http.StatusForbidden, "Nhân viên cần gửi duyệt bằng thao tác riêng")
+		return
+	}
 	if p.Month == "" && len(p.PostDate) >= 7 {
 		p.Month = p.PostDate[:7]
 	}
 	if p.Assignee == "" {
 		p.Assignee = me.Email
+	}
+	p.Assignee = strings.ToLower(strings.TrimSpace(p.Assignee))
+	if !me.IsLeader && !strings.EqualFold(p.Assignee, me.Email) {
+		writeError(w, http.StatusForbidden, "Không có quyền giao nội dung cho người khác")
+		return
 	}
 	_, err := a.db.ExecContext(r.Context(), "INSERT INTO content_plan(id,channel,month,pillar,content_key,demo_date,post_date,status,message,assignee) VALUES(?,?,?,?,?,?,?,?,?,?)", p.ID, p.Channel, p.Month, p.Pillar, p.Key, p.DemoDate, p.PostDate, p.Status, p.Message, p.Assignee)
 	if err != nil {
@@ -140,26 +243,158 @@ func (a *api) updatePlan(w http.ResponseWriter, r *http.Request, me user) {
 		return
 	}
 	id := r.PathValue("id")
+	var current plan
+	err := a.db.QueryRowContext(r.Context(), `SELECT id,channel,month,pillar,content_key,demo_date,post_date,status,message,assignee,reviewed_by,reviewed_at,review_note FROM content_plan WHERE id=?`, id).
+		Scan(&current.ID, &current.Channel, &current.Month, &current.Pillar, &current.Key, &current.DemoDate, &current.PostDate, &current.Status, &current.Message, &current.Assignee, &current.ReviewedBy, &current.ReviewedAt, &current.ReviewNote)
+	if err == sql.ErrNoRows {
+		writeError(w, http.StatusNotFound, "Không tìm thấy nội dung")
+		return
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if !me.IsLeader && !strings.EqualFold(current.Assignee, me.Email) {
+		writeError(w, http.StatusForbidden, "Không có quyền sửa nội dung này")
+		return
+	}
 	var p plan
 	if decode(r, &p) != nil {
 		writeError(w, http.StatusBadRequest, "Yêu cầu không hợp lệ")
 		return
 	}
-	res, err := a.db.ExecContext(r.Context(), "UPDATE content_plan SET channel=?,month=?,pillar=?,content_key=?,demo_date=?,post_date=?,status=?,message=?,assignee=? WHERE id=?", p.Channel, p.Month, p.Pillar, p.Key, p.DemoDate, p.PostDate, p.Status, p.Message, p.Assignee, id)
-	if err != nil {
-		fail(w, err)
+	if strings.TrimSpace(p.Pillar) == "" && strings.TrimSpace(p.Key) == "" {
+		writeError(w, http.StatusBadRequest, "Nhập Content Pillar hoặc Key")
 		return
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		writeError(w, http.StatusNotFound, "Không tìm thấy nội dung")
+	if p.Status == "" {
+		p.Status = current.Status
+	}
+	if !validPlanStatus(p.Status) {
+		writeError(w, http.StatusBadRequest, "Trạng thái nội dung không hợp lệ")
+		return
+	}
+	if !me.IsLeader && (p.Status == "Chờ duyệt" || p.Status == "Đã duyệt" || p.Status == "Đã đăng") {
+		writeError(w, http.StatusForbidden, "Trạng thái này cần người quản lý xử lý")
+		return
+	}
+	if p.Assignee == "" {
+		p.Assignee = current.Assignee
+	}
+	p.Assignee = strings.ToLower(strings.TrimSpace(p.Assignee))
+	if !me.IsLeader && !strings.EqualFold(p.Assignee, me.Email) {
+		writeError(w, http.StatusForbidden, "Không có quyền giao nội dung cho người khác")
+		return
+	}
+	if p.Month == "" && len(p.PostDate) >= 7 {
+		p.Month = p.PostDate[:7]
+	}
+	_, err = a.db.ExecContext(r.Context(), "UPDATE content_plan SET channel=?,month=?,pillar=?,content_key=?,demo_date=?,post_date=?,status=?,message=?,assignee=? WHERE id=?", p.Channel, p.Month, p.Pillar, p.Key, p.DemoDate, p.PostDate, p.Status, p.Message, p.Assignee, id)
+	if err != nil {
+		fail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (a *api) reviewPlan(w http.ResponseWriter, r *http.Request, me user) {
+	var p struct {
+		Action string `json:"action"`
+		Note   string `json:"note"`
+	}
+	if decode(r, &p) != nil {
+		writeError(w, http.StatusBadRequest, "Yêu cầu không hợp lệ")
+		return
+	}
+	p.Action = strings.TrimSpace(p.Action)
+	p.Note = strings.TrimSpace(p.Note)
+	if len(p.Note) > 2000 {
+		writeError(w, http.StatusBadRequest, "Ghi chú tối đa 2.000 ký tự")
+		return
+	}
+	id := r.PathValue("id")
+	var status, assignee string
+	if err := a.db.QueryRowContext(r.Context(), "SELECT status,assignee FROM content_plan WHERE id=?", id).Scan(&status, &assignee); err == sql.ErrNoRows {
+		writeError(w, http.StatusNotFound, "Không tìm thấy nội dung")
+		return
+	} else if err != nil {
+		fail(w, err)
+		return
+	}
+	newStatus := ""
+	switch p.Action {
+	case "submit":
+		if !strings.EqualFold(assignee, me.Email) && !me.IsLeader {
+			writeError(w, http.StatusForbidden, "Không có quyền gửi duyệt nội dung này")
+			return
+		}
+		if status != "Chưa thực hiện" && status != "Đang thực hiện" && status != "Yêu cầu sửa" {
+			writeError(w, http.StatusBadRequest, "Nội dung chưa sẵn sàng để gửi duyệt")
+			return
+		}
+		newStatus = "Chờ duyệt"
+	case "approve":
+		if !me.IsLeader {
+			writeError(w, http.StatusForbidden, "Chỉ quản lý mới có quyền duyệt nội dung")
+			return
+		}
+		if status != "Chờ duyệt" {
+			writeError(w, http.StatusBadRequest, "Chỉ nội dung đang chờ duyệt mới được duyệt")
+			return
+		}
+		newStatus = "Đã duyệt"
+	case "request_changes":
+		if !me.IsLeader {
+			writeError(w, http.StatusForbidden, "Chỉ quản lý mới có quyền yêu cầu sửa")
+			return
+		}
+		if status != "Chờ duyệt" {
+			writeError(w, http.StatusBadRequest, "Chỉ nội dung đang chờ duyệt mới được yêu cầu sửa")
+			return
+		}
+		if p.Note == "" {
+			writeError(w, http.StatusBadRequest, "Hãy ghi lý do cần sửa")
+			return
+		}
+		newStatus = "Yêu cầu sửa"
+	case "publish":
+		if !me.IsLeader {
+			writeError(w, http.StatusForbidden, "Chỉ quản lý mới có quyền đánh dấu đã đăng")
+			return
+		}
+		if status != "Đã duyệt" {
+			writeError(w, http.StatusBadRequest, "Chỉ nội dung đã duyệt mới được đánh dấu đã đăng")
+			return
+		}
+		newStatus = "Đã đăng"
+	default:
+		writeError(w, http.StatusBadRequest, "Thao tác duyệt không hợp lệ")
+		return
+	}
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(r.Context(), "UPDATE content_plan SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,review_note=? WHERE id=?", newStatus, me.Email, p.Note, id); err != nil {
+		fail(w, err)
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), "INSERT INTO content_plan_reviews(plan_id,actor,action,note) VALUES(?,?,?,?)", id, me.Email, p.Action, p.Note); err != nil {
+		fail(w, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "status": newStatus})
+}
+
 func (a *api) deletePlan(w http.ResponseWriter, r *http.Request, me user) {
-	if !require(w, me, "plan.edit") {
+	if !me.IsLeader {
+		writeError(w, http.StatusForbidden, "Chỉ quản lý mới có quyền xóa nội dung")
 		return
 	}
 	res, err := a.db.ExecContext(r.Context(), "DELETE FROM content_plan WHERE id=?", r.PathValue("id"))

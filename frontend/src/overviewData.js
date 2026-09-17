@@ -20,3 +20,10 @@ export function priorityTasks(tasks, dates) {
   const priority = {Cao:0,'Vừa':1,'Thấp':2}
   return tasks.filter(t=>t.status!=='done').sort((a,b)=>rank(a)-rank(b)||(priority[a.priority]??1)-(priority[b.priority]??1)||(a.due_date||'9999').localeCompare(b.due_date||'9999')||a.id.localeCompare(b.id))
 }
+
+export const formatVietnamDate = value => {
+  if (!value) return 'Chưa có ngày'
+  const date = new Date(`${value}T00:00:00+07:00`)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('vi-VN', {timeZone:'Asia/Ho_Chi_Minh',weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(date)
+}

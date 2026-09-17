@@ -87,6 +87,7 @@ const today = new Intl.DateTimeFormat('vi-VN', { weekday:'long', day:'numeric', 
 
 function App() {
   const [data, setData] = useState(null)
+  const [overviewSummary, setOverviewSummary] = useState(null)
   const [page, setPage] = useState(initialPage)
   const [planRevision, setPlanRevision] = useState(0)
   const [routeSearch,setRouteSearch] = useState(window.location.search)
@@ -104,6 +105,8 @@ function App() {
   const [error, setError] = useState('')
   const [demoMode, setDemoMode] = useState(!import.meta.env.PROD && import.meta.env.VITE_DEMO === 'true')
   const [modal, setModal] = useState('')
+  const [taskEditor, setTaskEditor] = useState(null)
+  const [planEditor, setPlanEditor] = useState(null)
   const [query, setQuery] = useState('')
   const [adminUsers, setAdminUsers] = useState(null)
   const [adminLoading, setAdminLoading] = useState(false)
@@ -129,6 +132,17 @@ function App() {
   }
 
   useEffect(() => { load().catch(()=>{}) }, [])
+
+  useEffect(() => {
+    if (!data || page !== 'overview' || demoMode) { setOverviewSummary(null); return }
+    setOverviewSummary(null)
+    let stale = false
+    const assignee = new URLSearchParams(routeSearch).get('assignee')
+    request('/overview' + (assignee ? '?assignee=' + encodeURIComponent(assignee) : ''))
+      .then(result => { if (!stale) setOverviewSummary(result) })
+      .catch(e => { if (!stale) setError(e.message) })
+    return () => { stale = true }
+  }, [data,page,routeSearch,demoMode])
 
   useEffect(() => {
     if (data && page === 'admin' && !data.me?.caps?.includes('users.manage')) navigate('overview', true)
@@ -297,16 +311,28 @@ function App() {
   }
 
   const saveTask = async form => {
+    const editing=Boolean(form.id)
     if (demoMode) {
-      setData(d => ({ ...d, tasks:[{ id:crypto.randomUUID(), status:'todo', ...form }, ...d.tasks] }))
+      setData(d => ({ ...d, tasks:editing?d.tasks.map(t=>t.id===form.id?{...t,...form}:t):[{ id:crypto.randomUUID(), status:'todo', ...form }, ...d.tasks] }))
+      setTaskEditor(null)
       setModal('')
       return
     }
     try {
-      await request('/tasks', { method:'POST', body:JSON.stringify(form) })
+      await request(editing?'/tasks/' + encodeURIComponent(form.id):'/tasks', { method:editing?'PATCH':'POST', body:JSON.stringify(form) })
+      setTaskEditor(null)
       setModal('')
       await load()
     } catch (e) { setError(e.message); throw e }
+  }
+
+  const deleteTask = async id => {
+    if (demoMode) {
+      setData(d => ({ ...d, tasks:d.tasks.filter(t=>t.id!==id) }))
+      return
+    }
+    try { await request('/tasks/' + encodeURIComponent(id), { method:'DELETE' }); await load() }
+    catch (e) { setError(e.message); throw e }
   }
 
   const savePlan = async form => {
@@ -322,6 +348,43 @@ function App() {
       setModal('')
       await load()
     } catch (e) { setError(e.message); throw e }
+  }
+
+  const savePlanEdit = async form => {
+    if (!form.id) return savePlan(form)
+    if (demoMode) {
+      setData(d => ({ ...d, contentPlan:d.contentPlan.map(p=>p.id===form.id?{...p,...form}:p) }))
+      setPlanEditor(null)
+      setPlanRevision(v => v + 1)
+      return
+    }
+    try {
+      await request('/plans/' + encodeURIComponent(form.id), { method:'PATCH', body:JSON.stringify(form) })
+      setPlanEditor(null)
+      setPlanRevision(v => v + 1)
+      await load()
+    } catch (e) { setError(e.message); throw e }
+  }
+
+  const deletePlan = async id => {
+    if (demoMode) {
+      setData(d => ({ ...d, contentPlan:d.contentPlan.filter(p=>p.id!==id) }))
+      setPlanRevision(v => v + 1)
+      return
+    }
+    try { await request('/plans/' + encodeURIComponent(id), { method:'DELETE' }); setPlanRevision(v=>v+1); await load() }
+    catch (e) { setError(e.message); throw e }
+  }
+
+  const reviewPlan = async (id, action, note='') => {
+    const nextStatus={submit:'Chờ duyệt',approve:'Đã duyệt',request_changes:'Yêu cầu sửa',publish:'Đã đăng'}[action]
+    if (demoMode) {
+      setData(d => ({ ...d, contentPlan:d.contentPlan.map(p=>p.id===id?{...p,status:nextStatus,reviewed_by:d.me.email,reviewed_at:new Date().toISOString(),review_note:note,reviews:[{id:Date.now(),action,note,actor:d.me.email,actor_name:d.me.name,created_at:new Date().toISOString()},...(p.reviews||[])]}:p) }))
+      setPlanRevision(v=>v+1)
+      return
+    }
+    try { await request('/plans/' + encodeURIComponent(id) + '/review', { method:'PATCH', body:JSON.stringify({ action, note }) }); setPlanRevision(v=>v+1); await load() }
+    catch (e) { setError(e.message); throw e }
   }
 
   if (loading) return <div className="loading-screen"><span className="loader"/><span>Đang tải DailyTask</span></div>
@@ -370,9 +433,9 @@ function App() {
         </header>
         {error && <button className="notice-bar" onClick={()=>setError('')}>{error}<span>×</span></button>}
         <div className="page-content">
-          {page === 'overview' && <WorkOverview data={data} go={navigate} params={new URLSearchParams(routeSearch)} onAdd={()=>setModal('task')} onStatus={updateTask}/>}
-          {page === 'plan' && <PlanPage routeSearch={routeSearch} go={navigate} data={data} onAdd={()=>setModal('plan')} demoMode={demoMode} refreshKey={planRevision}/>}
-          {page === 'tasks' && <WorkTasks data={data} go={navigate} params={new URLSearchParams(routeSearch)} onAdd={()=>setModal('task')} onStatus={updateTask}/>}
+          {page === 'overview' && <WorkOverview data={data} overview={overviewSummary} go={navigate} params={new URLSearchParams(routeSearch)} onAdd={()=>setModal('task')} onStatus={updateTask}/>}
+          {page === 'plan' && <PlanPage routeSearch={routeSearch} go={navigate} data={data} onAdd={()=>setModal('plan')} onEdit={plan=>setPlanEditor(plan)} onDelete={deletePlan} onReview={reviewPlan} demoMode={demoMode} refreshKey={planRevision}/>}
+          {page === 'tasks' && <WorkTasks data={data} go={navigate} params={new URLSearchParams(routeSearch)} onAdd={()=>setModal('task')} onStatus={updateTask} onEdit={task=>setTaskEditor(task)} onDelete={deleteTask}/>}
           {page === 'shifts' && <ShiftPage data={data}/> }
           {page === 'calendar' && <WorkCalendar data={data} go={navigate} params={new URLSearchParams(routeSearch)}/>}
           {page === 'payroll' && <PayrollPage data={data} onCompute={computePayroll} demo={demoMode}/>}
@@ -381,7 +444,7 @@ function App() {
         </div>
       </main>
       {modal === 'task' && <TaskModal initialAssignee={new URLSearchParams(routeSearch).get('assignee')} users={data.users || []} me={data.me} onClose={()=>setModal('')} onSave={saveTask}/>}
-      {modal === 'plan' && <PlanModal users={data.users || []} onClose={()=>setModal('')} onSave={savePlan}/>}
+      {modal === 'plan' && <PlanModal users={data.users || []} me={data.me} onClose={()=>setModal('')} onSave={savePlan}/>}{taskEditor && <TaskModal task={taskEditor} users={data.users || []} me={data.me} onClose={()=>setTaskEditor(null)} onSave={saveTask}/>}{planEditor && <PlanModal plan={planEditor} users={data.users || []} me={data.me} onClose={()=>setPlanEditor(null)} onSave={savePlanEdit}/>}
     </div>
   )
 }
@@ -417,11 +480,11 @@ function PageHeading({eyebrow,title,description,action}) { return <div className
 function Metric({label,value,delta,color,icon}) { return <div className="metric-card"><div className="metric-top"><span>{label}</span><i className={'metric-icon '+color}>{icon}</i></div><div className="metric-value">{value}</div>{delta && <div className="metric-foot"><span className={typeof delta==='object'?delta.tone:''}>{typeof delta==='object'?delta.text:delta}</span></div>}</div> }
 
 function Status({value}) {
-  const cls=value==='Đã đăng'||value==='done'?'success':value==='Đang thực hiện'||value==='doing'?'warning':value==='Đã khóa'?'danger':value==='Chưa thực hiện'||value==='todo'?'neutral':'info'
+  const cls=value==='Đã đăng'||value==='Đã duyệt'||value==='done'?'success':value==='Đang thực hiện'||value==='doing'?'warning':value==='Đã khóa'||value==='Yêu cầu sửa'?'danger':value==='Chưa thực hiện'||value==='todo'?'neutral':'info'
   return <span className={'status '+cls}><i/>{value||'Chưa thực hiện'}</span>
 }
 
-function PlanPage({data,onAdd,demoMode,refreshKey,routeSearch,go}) {
+function PlanPage({data,onAdd,onEdit,onDelete,onReview,demoMode,refreshKey,routeSearch,go}) {
   const routeParams = new URLSearchParams(routeSearch)
   const filters = Object.fromEntries(['channel','from','to','assignee','status','unpublished','id'].map(key=>[key,routeParams.get(key)||'']))
   const query = routeParams.get('q')||''
@@ -554,7 +617,7 @@ function PlanPage({data,onAdd,demoMode,refreshKey,routeSearch,go}) {
       {hasMore && <div ref={sentinel} className="plan-load-trigger" aria-live="polite">{loadingMore?'Đang tải thêm nội dung…':<button className="secondary-button" onClick={loadMore}>Tải thêm</button>}</div>}
       {!hasMore && items.length>0 && <div className="plan-end-note">Đã hiển thị hết {total} nội dung phù hợp.</div>}
     </section>
-    {filters.id && !loading && (items.find(p=>p.id===filters.id) ? <PlanDetails plan={items.find(p=>p.id===filters.id)} users={data.users||[]} onClose={()=>setFilters(f=>({...f,id:''}))}/> : <p role="alert">Không tìm thấy nội dung hoặc bạn không có quyền xem. <button className="text-button" onClick={()=>setFilters(f=>({...f,id:''}))}>Đóng chi tiết</button></p>)}
+    {filters.id && !loading && (items.find(p=>p.id===filters.id) ? <PlanDetails plan={items.find(p=>p.id===filters.id)} users={data.users||[]} me={data.me} onReview={onReview} onEdit={onEdit} onDelete={onDelete} onClose={()=>setFilters(f=>({...f,id:''}))}/> : <p role="alert">Không tìm thấy nội dung hoặc bạn không có quyền xem. <button className="text-button" onClick={()=>setFilters(f=>({...f,id:''}))}>Đóng chi tiết</button></p>)}
   </div>
 }
 
@@ -1106,20 +1169,24 @@ function MemberModal({member,isSelf,onClose,onSave}) {
   </form></Modal>
 }
 
-function TaskModal({users,me,onClose,onSave,initialAssignee}) {
+function TaskModal({task,users,me,onClose,onSave,initialAssignee}) {
+  const editing=Boolean(task)
   const [saving,setSaving]=useState(false),[saveError,setSaveError]=useState('')
-  const submit=async e=>{e.preventDefault();if(saving)return;setSaving(true);setSaveError('');try{await onSave(form)}catch(error){setSaveError(error.message)}finally{setSaving(false)}}
-  const [form,setForm]=useState({title:'',assignee:(me?.isLeader&&users.some(u=>u.email===initialAssignee)?initialAssignee:me?.email)||users[0]?.email||'',due_date:'',priority:'Vừa',qty:1})
+  const [form,setForm]=useState(()=>editing?{id:task.id,title:task.title||'',assignee:task.assignee,due:task.due||'',due_date:task.due_date||'',priority:task.priority||'Vừa',qty:task.qty||1,kpi_key:task.kpi_key||''}:{title:'',assignee:(me?.isLeader&&users.some(u=>u.email===initialAssignee)?initialAssignee:me?.email)||users[0]?.email||'',due:'',due_date:'',priority:'Vừa',qty:1,kpi_key:''})
   const change=(key,value)=>setForm(f=>({...f,[key]:value}))
-  return <Modal title="Tạo công việc mới" onClose={onClose}><form className="modal-form" onSubmit={submit}><label>Tên công việc<input autoFocus value={form.title} onChange={e=>change('title',e.target.value)} placeholder="Ví dụ: Hoàn thiện kế hoạch tuần" required/></label><div className="form-two"><label>Người phụ trách{me?.isLeader?<select value={form.assignee} onChange={e=>change('assignee',e.target.value)}>{users.map(u=><option value={u.email} key={u.email}>{u.name}</option>)}</select>:<input value={me?.name||me?.email||''} readOnly/>}</label><label>Ngày đến hạn<input type="date" value={form.due_date} onChange={e=>change('due_date',e.target.value)}/></label></div><label>Ưu tiên<select value={form.priority} onChange={e=>change('priority',e.target.value)}><option>Cao</option><option>Vừa</option><option>Thấp</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Huỷ</button>{saveError&&<p role="alert" className="form-error">{saveError}</p>}<button className="primary-button" disabled={saving}>{saving?'Đang lưu…':'Tạo công việc'}</button></div></form></Modal>
+  const submit=async e=>{e.preventDefault();if(saving)return;setSaving(true);setSaveError('');try{await onSave(form)}catch(error){setSaveError(error.message)}finally{setSaving(false)}}
+  const canAssign=Boolean(me?.isLeader)
+  return <Modal title={editing?'Cập nhật công việc':'Tạo công việc mới'} onClose={onClose}><form className="modal-form" onSubmit={submit}><label>Tên công việc<input autoFocus value={form.title} onChange={e=>change('title',e.target.value)} placeholder="Ví dụ: Hoàn thiện kế hoạch tuần" required/></label><div className="form-two"><label>Người phụ trách{canAssign?<select value={form.assignee} onChange={e=>change('assignee',e.target.value)}>{users.map(u=><option value={u.email} key={u.email}>{u.name}</option>)}</select>:<input value={users.find(u=>u.email===form.assignee)?.name||me?.name||me?.email||''} readOnly/>}</label><label>Ngày đến hạn<input type="date" value={form.due_date} onChange={e=>change('due_date',e.target.value)}/></label></div><label>Ưu tiên<select value={form.priority} onChange={e=>change('priority',e.target.value)}><option>Cao</option><option>Vừa</option><option>Thấp</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Huỷ</button>{saveError&&<p role="alert" className="form-error">{saveError}</p>}<button className="primary-button" disabled={saving}>{saving?'Đang lưu…':editing?'Lưu thay đổi':'Tạo công việc'}</button></div></form></Modal>
 }
 
-function PlanModal({users,onClose,onSave}) {
+function PlanModal({plan,users,me,onClose,onSave}) {
+  const editing=Boolean(plan)
   const [saving,setSaving]=useState(false),[saveError,setSaveError]=useState('')
-  const submit=async e=>{e.preventDefault();if(saving)return;setSaving(true);setSaveError('');try{await onSave(form)}catch(error){setSaveError(error.message)}finally{setSaving(false)}}
-  const [form,setForm]=useState({channel:'Daily Stories',month:dateWindow().today.slice(0,7),pillar:'',key:'',demo_date:'',post_date:'',message:'',assignee:users[0]?.email||''})
+  const [form,setForm]=useState(()=>editing?{id:plan.id,channel:plan.channel||'',month:plan.month||dateWindow().today.slice(0,7),pillar:plan.pillar||'',key:plan.key||'',demo_date:plan.demo_date||'',post_date:plan.post_date||'',message:plan.message||'',assignee:plan.assignee||me?.email||'',status:plan.status||'Chưa thực hiện'}:{channel:'Daily Stories',month:dateWindow().today.slice(0,7),pillar:'',key:'',demo_date:'',post_date:'',message:'',assignee:me?.email||users[0]?.email||''})
   const change=(key,value)=>setForm(f=>({...f,[key]:value}))
-  return <Modal title="Thêm nội dung vào kế hoạch" onClose={onClose}><form className="modal-form" onSubmit={submit}><label>Content Pillar<input autoFocus value={form.pillar} onChange={e=>change('pillar',e.target.value)} placeholder="Ví dụ: Behind the scenes" required/></label><label>Ý tưởng / Key<input value={form.key} onChange={e=>change('key',e.target.value)} placeholder="Mô tả ngắn nội dung"/></label><div className="form-two"><label>Kênh<input value={form.channel} onChange={e=>change('channel',e.target.value)}/></label><label>Người phụ trách<select value={form.assignee} onChange={e=>change('assignee',e.target.value)}>{users.map(u=><option value={u.email} key={u.email}>{u.name}</option>)}</select></label></div><div className="form-two"><label>Ngày gửi demo<input type="date" value={form.demo_date} onChange={e=>change('demo_date',e.target.value)}/></label><label>Ngày đăng<input type="date" value={form.post_date} onChange={e=>change('post_date',e.target.value)}/></label></div><label>Thông điệp<textarea value={form.message} onChange={e=>change('message',e.target.value)} rows="3" placeholder="Thông điệp chính của nội dung"/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Huỷ</button>{saveError&&<p role="alert" className="form-error">{saveError}</p>}<button className="primary-button" disabled={saving}>{saving?'Đang lưu…':'Thêm vào kế hoạch'}</button></div></form></Modal>
+  const submit=async e=>{e.preventDefault();if(saving)return;setSaving(true);setSaveError('');try{await onSave(form)}catch(error){setSaveError(error.message)}finally{setSaving(false)}}
+  const canAssign=Boolean(me?.isLeader)
+  return <Modal title={editing?'Chỉnh sửa nội dung':'Thêm nội dung vào kế hoạch'} onClose={onClose}><form className="modal-form" onSubmit={submit}><label>Content Pillar<input autoFocus value={form.pillar} onChange={e=>change('pillar',e.target.value)} placeholder="Ví dụ: Behind the scenes" required/></label><label>Ý tưởng / Key<input value={form.key} onChange={e=>change('key',e.target.value)} placeholder="Mô tả ngắn nội dung"/></label><div className="form-two"><label>Kênh<input value={form.channel} onChange={e=>change('channel',e.target.value)}/></label><label>Người phụ trách{canAssign?<select value={form.assignee} onChange={e=>change('assignee',e.target.value)}>{users.map(u=><option value={u.email} key={u.email}>{u.name}</option>)}</select>:<input value={users.find(u=>u.email===form.assignee)?.name||me?.name||me?.email||''} readOnly/>}</label></div><div className="form-two"><label>Ngày gửi demo<input type="date" value={form.demo_date} onChange={e=>change('demo_date',e.target.value)}/></label><label>Ngày đăng<input type="date" value={form.post_date} onChange={e=>change('post_date',e.target.value)}/></label></div><label>Thông điệp<textarea value={form.message} onChange={e=>change('message',e.target.value)} rows="3" placeholder="Thông điệp chính của nội dung"/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Huỷ</button>{saveError&&<p role="alert" className="form-error">{saveError}</p>}<button className="primary-button" disabled={saving}>{saving?'Đang lưu…':editing?'Lưu thay đổi':'Thêm vào kế hoạch'}</button></div></form></Modal>
 }
 
 function Modal({title,onClose,children,className=''}) {

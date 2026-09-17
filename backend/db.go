@@ -41,10 +41,17 @@ CREATE TABLE IF NOT EXISTS content_plan (
   id TEXT PRIMARY KEY, channel TEXT NOT NULL DEFAULT '', month TEXT NOT NULL DEFAULT '',
   pillar TEXT NOT NULL DEFAULT '', content_key TEXT NOT NULL DEFAULT '', demo_date TEXT NOT NULL DEFAULT '',
   post_date TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'Chưa thực hiện',
-  message TEXT NOT NULL DEFAULT '', assignee TEXT NOT NULL DEFAULT ''
+  message TEXT NOT NULL DEFAULT '', assignee TEXT NOT NULL DEFAULT '',
+  reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT NOT NULL DEFAULT '', review_note TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS plan_month_channel ON content_plan(month,channel);
 CREATE INDEX IF NOT EXISTS plan_post_id ON content_plan(post_date DESC,id DESC);
+CREATE TABLE IF NOT EXISTS content_plan_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id TEXT NOT NULL REFERENCES content_plan(id) ON DELETE CASCADE,
+  actor TEXT NOT NULL, action TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS plan_reviews_plan_created ON content_plan_reviews(plan_id,created_at DESC,id DESC);
 CREATE TABLE IF NOT EXISTS schedules (
   id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, date TEXT NOT NULL, time TEXT NOT NULL,
   location TEXT NOT NULL DEFAULT '', lead TEXT NOT NULL DEFAULT '', attendees TEXT NOT NULL DEFAULT '[]',
@@ -146,6 +153,9 @@ func openDB(path, adminEmail, adminPassword string) (*sql.DB, error) {
 		{"payroll", "computed_at", "TEXT NOT NULL DEFAULT ''"},
 		{"schedules", "event_id", "TEXT NOT NULL DEFAULT ''"},
 		{"meetings", "event_id", "TEXT NOT NULL DEFAULT ''"},
+		{"content_plan", "reviewed_by", "TEXT NOT NULL DEFAULT ''"},
+		{"content_plan", "reviewed_at", "TEXT NOT NULL DEFAULT ''"},
+		{"content_plan", "review_note", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err = ensureColumn(db, col.table, col.name, col.definition); err != nil {
 			db.Close()
