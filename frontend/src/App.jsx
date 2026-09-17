@@ -502,14 +502,42 @@ function Status({value}) {
   return <span className={'status '+cls}><i/>{value||'Chưa thực hiện'}</span>
 }
 
+function formatPlanDate(value) {
+  if (!value) return 'Chưa có lịch đăng'
+  const date = new Date(`${value}T00:00:00+07:00`)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('vi-VN', {day:'numeric', month:'short', timeZone:'Asia/Ho_Chi_Minh'}).format(date)
+}
+
+function groupPlanItems(items) {
+  const today = dateWindow().today
+  const groups = new Map()
+  for (const plan of items) {
+    const key = (plan.channel || '').trim()
+    const group = groups.get(key) || {key, name:key || 'Chưa gán Kênh', total:0, upcoming:0, overdue:0, next_post:'', by_status:{}, assignees:[]}
+    const status = plan.status || 'Chưa thực hiện'
+    group.total++
+    group.by_status[status] = (group.by_status[status] || 0) + 1
+    if (plan.assignee && !group.assignees.includes(plan.assignee)) group.assignees.push(plan.assignee)
+    if (status !== 'Đã đăng' && plan.post_date) {
+      if (plan.post_date < today) group.overdue++
+      else { group.upcoming++; if (!group.next_post || plan.post_date < group.next_post) group.next_post = plan.post_date }
+    }
+    groups.set(key, group)
+  }
+  return [...groups.values()].sort((a,b) => (a.next_post ? 0 : 1) - (b.next_post ? 0 : 1) || (a.next_post || '').localeCompare(b.next_post || '') || b.total - a.total || a.name.localeCompare(b.name))
+}
+
 function PlanPage({data,onAdd,onEdit,onDelete,onReview,demoMode,refreshKey,routeSearch,go}) {
   const routeParams = new URLSearchParams(routeSearch)
   const filters = Object.fromEntries(['channel','from','to','assignee','status','unpublished','id'].map(key=>[key,routeParams.get(key)||'']))
   const query = routeParams.get('q')||''
-  const onQueryChange = q => go('plan',true,{...filters,q})
-  const setFilters = update => { const next=typeof update==='function'?update(filters):update; go('plan',false,{...next,q:query}) }
+  const view = routeParams.get('view') || (filters.channel ? 'detail' : 'channels')
+  const onQueryChange = q => go('plan',true,{...filters,q,view})
+  const setFilters = update => { const next=typeof update==='function'?update(filters):update; go('plan',false,{...next,q:query,view:next.view||view}) }
   const [debouncedQuery,setDebouncedQuery] = useState(query)
   const [items,setItems] = useState([])
+  const [groups,setGroups] = useState([])
   const [channels,setChannels] = useState([...new Set((data.contentPlan||[]).map(p=>p.channel).filter(Boolean))])
   const [statuses,setStatuses] = useState([...new Set((data.contentPlan||[]).map(p=>p.status).filter(Boolean))])
   const [stats,setStats] = useState({total:0,published:0,in_progress:0,planned:0})
@@ -538,6 +566,7 @@ function PlanPage({data,onAdd,onEdit,onDelete,onReview,demoMode,refreshKey,route
     setLoading(true)
     setLoadingMore(false)
     setItems([])
+    setGroups([])
     setTotal(0)
     setStats({total:0,published:0,in_progress:0,planned:0})
     setHasMore(false)
@@ -550,12 +579,13 @@ function PlanPage({data,onAdd,onEdit,onDelete,onReview,demoMode,refreshKey,route
           const q = (params.get('q')||'').toLowerCase()
           const filtered = (data.contentPlan||[]).filter(p => {
             const content = [p.key,p.pillar,p.message].join(' ').toLowerCase()
-            return (!q || content.includes(q)) && (!filters.channel || p.channel===filters.channel) && (!filters.from || p.post_date>=filters.from) && (!filters.to || p.post_date<=filters.to) && (!filters.assignee || p.assignee===filters.assignee) && (!filters.status || p.status===filters.status) && (!filters.id || p.id===filters.id) && (!filters.unpublished || p.status!=='Đã đăng')
+            return (!q || content.includes(q)) && (!filters.channel || (filters.channel==='__empty' ? !(p.channel||'').trim() : (p.channel||'').trim()===filters.channel)) && (!filters.from || p.post_date>=filters.from) && (!filters.to || p.post_date<=filters.to) && (!filters.assignee || p.assignee===filters.assignee) && (!filters.status || p.status===filters.status) && (!filters.id || p.id===filters.id) && (!filters.unpublished || p.status!=='Đã đăng')
           })
-          result = {items:filtered.slice(0,40),total:filtered.length,channels:[...new Set((data.contentPlan||[]).map(p=>p.channel).filter(Boolean))],statuses:[...new Set((data.contentPlan||[]).map(p=>p.status).filter(Boolean))],hasMore:false,stats:{total:filtered.length,published:filtered.filter(p=>p.status==='Đã đăng').length,in_progress:filtered.filter(p=>p.status==='Đang thực hiện').length,planned:filtered.filter(p=>p.status==='Chưa thực hiện').length,by_status:Object.fromEntries([...new Set(filtered.map(p=>p.status))].map(status=>[status,filtered.filter(p=>p.status===status).length]))}}
+          result = {items:filtered.slice(0,40),groups:groupPlanItems(filtered),total:filtered.length,channels:[...new Set((data.contentPlan||[]).map(p=>(p.channel||'').trim()).filter(Boolean))],statuses:[...new Set((data.contentPlan||[]).map(p=>p.status).filter(Boolean))],hasMore:false,stats:{total:filtered.length,published:filtered.filter(p=>p.status==='Đã đăng').length,in_progress:filtered.filter(p=>p.status==='Đang thực hiện').length,planned:filtered.filter(p=>p.status==='Chưa thực hiện').length,by_status:Object.fromEntries([...new Set(filtered.map(p=>p.status))].map(status=>[status,filtered.filter(p=>p.status===status).length]))}}
         } else result = await request('/plans?'+filterKey)
         if (current !== generation.current) return
         setItems(result.items||[])
+        setGroups(result.groups||groupPlanItems(result.items||[]))
         setTotal(result.total||0)
         setStats(result.stats||{total:0,published:0,in_progress:0,planned:0,by_status:{}})
         setChannels(result.channels||[])
@@ -608,34 +638,34 @@ function PlanPage({data,onAdd,onEdit,onDelete,onReview,demoMode,refreshKey,route
   }, [hasMore,loading,loadingMore,filterKey,nextCursor])
 
   const personName = email => data.users?.find(u=>u.email===email)?.name||email||'—'
+  const channelView = view === 'channels'
+  const detailView = view === 'detail' && Boolean(filters.channel)
+  const selectedGroup = groups.find(group => group.key === (filters.channel === '__empty' ? '' : filters.channel))
+  const channelName = selectedGroup?.name || (filters.channel === '__empty' ? 'Chưa gán Kênh' : filters.channel)
+  const openChannel = key => go('plan',false,{...filters,channel:key||'__empty',id:'',view:'detail',q:query})
+  const backToChannels = () => go('plan',false,{...filters,channel:'',id:'',view:'channels',q:query})
+  const statusChips = [['Chưa thực hiện','Chưa thực hiện'],['Đang thực hiện','Đang thực hiện'],['Chờ duyệt','Chờ duyệt'],['Yêu cầu sửa','Yêu cầu sửa'],['Đã đăng','Đã đăng']]
   return <div>
     <PageHeading eyebrow="LỊCH BIÊN TẬP" title="Kế hoạch nội dung" description="Lập kế hoạch, phân công và theo dõi lịch xuất bản." action={<button className="primary-button" onClick={onAdd}><Icon name="plus"/> Thêm nội dung</button>}/>
     <section className="plan-stats" aria-label="Thống kê theo bộ lọc">
       <div><span>Tổng nội dung khớp lọc</span><b>{stats.total}</b></div>{Object.entries(stats.by_status||{}).map(([status,count])=><div key={status}><span>{status||'Chưa đặt trạng thái'}</span><b>{count}</b></div>)}
     </section>
     <section className="panel plan-filter-panel">
-      <div className="plan-filter-heading"><div><h2>Lọc nội dung</h2><span>{items.length} / {total} kết quả đang tải</span></div><button className="text-button" onClick={()=>go('plan',false,{})}>Xóa bộ lọc</button></div>
+      <div className="plan-filter-heading"><div><h2>Lọc nội dung</h2><span>{items.length} / {total} kết quả đang tải</span></div><div className="plan-filter-actions"><div className="plan-view-switch" role="tablist" aria-label="Cách xem kế hoạch"><button role="tab" aria-selected={channelView} className={channelView?'selected':''} onClick={()=>go('plan',true,{...filters,channel:'',id:'',q:query,view:'channels'})}>Theo Kênh</button><button role="tab" aria-selected={!channelView} className={!channelView?'selected':''} onClick={()=>go('plan',true,{...filters,q:query,view:detailView?'detail':'list'})}>Danh sách</button></div><button className="text-button" onClick={()=>go('plan',false,{view:'channels'})}>Xóa bộ lọc</button></div></div>
       <div className="plan-filter-grid">
         <label className="plan-search-field">Nội dung<input type="search" value={query} onChange={e=>onQueryChange(e.target.value)} placeholder="Tìm chủ đề, key, mô tả..."/></label>
         <label>Xuất bản<select value={filters.unpublished} onChange={e=>setFilters(f=>({...f,unpublished:e.target.value}))}><option value="">Tất cả</option><option value="1">Chưa đăng</option></select></label>
-        <label>Kênh<select value={filters.channel} onChange={e=>setFilters(f=>({...f,channel:e.target.value}))}><option value="">Tất cả kênh</option>{channels.map(x=><option key={x} value={x}>{x}</option>)}</select></label>
+        <label>Kênh<select value={filters.channel} onChange={e=>setFilters(f=>({...f,channel:e.target.value,view:e.target.value?'detail':'channels'}))}><option value="">Tất cả kênh</option><option value="__empty">Chưa gán Kênh</option>{channels.map(x=><option key={x} value={x}>{x}</option>)}</select></label>
         <label>Ngày đăng từ<input type="date" value={filters.from} onChange={e=>setFilters(f=>({...f,from:e.target.value}))}/></label>
         <label>Đến ngày<input type="date" value={filters.to} onChange={e=>setFilters(f=>({...f,to:e.target.value}))}/></label>
         <label>Phụ trách<select value={filters.assignee} onChange={e=>setFilters(f=>({...f,assignee:e.target.value}))}><option value="">Tất cả thành viên</option>{(data.users||[]).map(u=><option key={u.email} value={u.email}>{u.name}</option>)}</select></label>
         <label>Trạng thái<select value={filters.status} onChange={e=>setFilters(f=>({...f,status:e.target.value}))}><option value="">Tất cả trạng thái</option>{statuses.map(x=><option key={x} value={x}>{x}</option>)}</select></label>
       </div>
     </section>
-    <section className="panel table-panel plan-results-panel"><div className="table-toolbar"><h2>Danh sách nội dung</h2><span>{items.length} / {total} nội dung</span></div>
-      <div className="simple-table plan-table"><div className="table-head"><span>CONTENT PILLAR / KEY</span><span>KÊNH</span><span>DEMO</span><span>NGÀY ĐĂNG</span><span>PHỤ TRÁCH</span><span>TRẠNG THÁI</span></div>
-        {items.map(p=><div className="table-row" key={p.id}><span className="plan-title"><button className="work-title" onClick={()=>setFilters(f=>({...f,id:p.id}))}>{p.pillar||'Nội dung'}</button><small>{p.key}</small></span><span><i className="table-avatar">{(p.channel||'D')[0]}</i>{p.channel}</span><span>{p.demo_date||'—'}</span><span>{p.post_date||'—'}</span><span>{personName(p.assignee)}</span><Status value={p.status}/></div>)}
-        {!items.length && !loading && <div className="plan-empty">{loadError?'Không tải được nội dung.':'Không tìm thấy nội dung phù hợp.'}</div>}
-        {loading && !items.length && <div className="plan-empty">Đang tải nội dung…</div>}
-      </div>
-      {loadError && <div className="plan-load-error">{loadError}</div>}
-      {hasMore && <div ref={sentinel} className="plan-load-trigger" aria-live="polite">{loadingMore?'Đang tải thêm nội dung…':<button className="secondary-button" onClick={loadMore}>Tải thêm</button>}</div>}
-      {!hasMore && items.length>0 && <div className="plan-end-note">Đã hiển thị hết {total} nội dung phù hợp.</div>}
-    </section>
-    {filters.id && !loading && (items.find(p=>p.id===filters.id) ? <PlanDetails plan={items.find(p=>p.id===filters.id)} users={data.users||[]} me={data.me} onReview={onReview} onEdit={onEdit} onDelete={onDelete} onClose={()=>setFilters(f=>({...f,id:''}))}/> : <p role="alert">Không tìm thấy nội dung hoặc bạn không có quyền xem. <button className="text-button" onClick={()=>setFilters(f=>({...f,id:''}))}>Đóng chi tiết</button></p>)}
+    {detailView&&<section className="panel plan-channel-detail-head"><button className="text-button" onClick={backToChannels}>← Tất cả Kênh</button><div className="plan-channel-detail-title"><i className="channel-card-icon">{channelName[0]||'K'}</i><div><span className="eyebrow">CHI TIẾT KÊNH</span><h2>{channelName}</h2><p>{selectedGroup?.total||total} nội dung trong bộ lọc hiện tại</p></div></div><div className="plan-channel-detail-stats"><span><b>{selectedGroup?.upcoming||0}</b>Sắp đăng</span><span><b>{selectedGroup?.overdue||0}</b>Đang trễ</span><span><b>{selectedGroup?.by_status?.['Đã đăng']||0}</b>Đã đăng</span></div></section>}
+    {channelView&&<section className="panel plan-channel-panel"><div className="table-toolbar"><div><h2>Các Kênh nội dung</h2><span className="plan-section-note">{groups.length} Kênh · Sắp xếp theo lịch đăng gần nhất</span></div></div><div className="plan-channel-grid">{groups.map(group=><button className="plan-channel-card" key={group.key||'__empty'} onClick={()=>openChannel(group.key)} aria-label={`Xem chi tiết ${group.name}`}><div className="plan-channel-card-top"><i className="channel-card-icon">{group.name[0]||'K'}</i><span className="channel-card-arrow">→</span></div><div className="plan-channel-card-title"><h3>{group.name}</h3><span>{group.total} nội dung</span></div><div className="channel-card-statuses">{statusChips.filter(([status])=>group.by_status?.[status]).map(([status,label])=><span key={status}>{label} <b>{group.by_status[status]}</b></span>)}{group.by_status?.['']&&<span>Chưa đặt trạng thái <b>{group.by_status['']}</b></span>}{!Object.keys(group.by_status||{}).length&&<span>Chưa có trạng thái</span>}</div><div className="channel-card-meta"><span>{group.next_post?`Bài tiếp theo · ${formatPlanDate(group.next_post)}`:'Chưa có lịch đăng'}</span>{group.overdue>0&&<b className="channel-card-overdue">{group.overdue} đang trễ</b>}</div><div className="channel-card-owner">{(group.assignees||[]).slice(0,3).map(email=><i key={email} title={personName(email)}>{initials(personName(email))}</i>)}<span>{group.assignees?.length?group.assignees.slice(0,2).map(personName).join(', '):'Chưa phân công'}</span></div><span className="channel-card-cta">Xem chi tiết Kênh →</span></button>)}{!groups.length&&!loading&&<div className="plan-empty">{loadError?'Không tải được nhóm Kênh.':'Không có Kênh nào khớp bộ lọc.'}</div>}{loading&&!groups.length&&<div className="plan-empty">Đang tải các Kênh…</div>}</div></section>}
+    {!channelView&&<section className="panel table-panel plan-results-panel"><div className="table-toolbar"><h2>{detailView?`Nội dung trong ${channelName}`:'Danh sách nội dung'}</h2><span>{items.length} / {total} nội dung</span></div><div className="simple-table plan-table"><div className="table-head"><span>CONTENT PILLAR / KEY</span><span>KÊNH</span><span>DEMO</span><span>NGÀY ĐĂNG</span><span>PHỤ TRÁCH</span><span>TRẠNG THÁI</span></div>{items.map(p=><div className="table-row" key={p.id}><span className="plan-title"><button className="work-title" onClick={()=>setFilters(f=>({...f,id:p.id}))}>{p.pillar||'Nội dung'}</button><small>{p.key}</small></span><span><i className="table-avatar">{(p.channel||'D')[0]}</i>{p.channel||'Chưa gán Kênh'}</span><span>{p.demo_date||'—'}</span><span>{p.post_date||'—'}</span><span>{personName(p.assignee)}</span><Status value={p.status}/></div>)}{!items.length&&!loading&&<div className="plan-empty">{loadError?'Không tải được nội dung.':'Không tìm thấy nội dung phù hợp.'}</div>}{loading&&!items.length&&<div className="plan-empty">Đang tải nội dung…</div>}</div>{loadError&&<div className="plan-load-error">{loadError}</div>}{hasMore&&<div ref={sentinel} className="plan-load-trigger" aria-live="polite">{loadingMore?'Đang tải thêm nội dung…':<button className="secondary-button" onClick={loadMore}>Tải thêm</button>}</div>}{!hasMore&&items.length>0&&<div className="plan-end-note">Đã hiển thị hết {total} nội dung phù hợp.</div>}</section>}
+    {filters.id&&!loading&&(items.find(p=>p.id===filters.id)?<PlanDetails plan={items.find(p=>p.id===filters.id)} users={data.users||[]} me={data.me} onReview={onReview} onEdit={onEdit} onDelete={onDelete} onClose={()=>setFilters(f=>({...f,id:''}))}/>:<p role="alert">Không tìm thấy nội dung hoặc bạn không có quyền xem. <button className="text-button" onClick={()=>setFilters(f=>({...f,id:''}))}>Đóng chi tiết</button></p>)}
   </div>
 }
 

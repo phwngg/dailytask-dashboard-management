@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,14 +23,26 @@ type planStats struct {
 	ByStatus   map[string]int `json:"by_status"`
 }
 
+type planChannelGroup struct {
+	Key       string         `json:"key"`
+	Name      string         `json:"name"`
+	Total     int            `json:"total"`
+	Upcoming  int            `json:"upcoming"`
+	Overdue   int            `json:"overdue"`
+	NextPost  string         `json:"next_post"`
+	ByStatus  map[string]int `json:"by_status"`
+	Assignees []string       `json:"assignees"`
+}
+
 type planPage struct {
-	Items      []plan      `json:"items"`
-	Total      int         `json:"total"`
-	Stats      planStats   `json:"stats"`
-	Channels   []string    `json:"channels"`
-	Statuses   []string    `json:"statuses"`
-	HasMore    bool        `json:"hasMore"`
-	NextCursor *planCursor `json:"nextCursor"`
+	Items      []plan             `json:"items"`
+	Total      int                `json:"total"`
+	Stats      planStats          `json:"stats"`
+	Groups     []planChannelGroup `json:"groups"`
+	Channels   []string           `json:"channels"`
+	Statuses   []string           `json:"statuses"`
+	HasMore    bool               `json:"hasMore"`
+	NextCursor *planCursor        `json:"nextCursor"`
 }
 
 func (a *api) listPlans(w http.ResponseWriter, r *http.Request, me user) {
@@ -103,6 +116,11 @@ func (a *api) listPlans(w http.ResponseWriter, r *http.Request, me user) {
 	}
 	statusCounts.Close()
 	out.Stats.Total = out.Total
+	out.Groups, err = a.planChannelGroupsForRequest(r, me)
+	if err != nil {
+		fail(w, err)
+		return
+	}
 
 	optionScope := ""
 	optionArgs := []any{}
@@ -110,7 +128,7 @@ func (a *api) listPlans(w http.ResponseWriter, r *http.Request, me user) {
 		optionScope = " AND assignee=?"
 		optionArgs = append(optionArgs, me.Email)
 	}
-	channelRows, err := a.db.QueryContext(r.Context(), "SELECT DISTINCT channel FROM content_plan WHERE channel<>''"+optionScope+" ORDER BY channel", optionArgs...)
+	channelRows, err := a.db.QueryContext(r.Context(), "SELECT DISTINCT trim(channel) FROM content_plan WHERE trim(channel)<>''"+optionScope+" ORDER BY trim(channel)", optionArgs...)
 	if err != nil {
 		fail(w, err)
 		return
@@ -213,12 +231,23 @@ func planFilter(r *http.Request) ([]string, []any, error) {
 		clauses = append(clauses, "(content_key LIKE ? ESCAPE '\\' OR pillar LIKE ? ESCAPE '\\' OR message LIKE ? ESCAPE '\\')")
 		args = append(args, pattern, pattern, pattern)
 	}
-	for _, item := range []struct{ key, column string }{{"channel", "channel"}, {"assignee", "assignee"}, {"status", "status"}, {"id", "id"}} {
+	for _, item := range []struct{ key, column string }{{"assignee", "assignee"}, {"status", "status"}, {"id", "id"}} {
 		if value := strings.TrimSpace(r.URL.Query().Get(item.key)); value != "" {
 			if len(value) > 200 {
 				return nil, nil, errors.New("Bộ lọc không hợp lệ")
 			}
 			clauses = append(clauses, item.column+"=?")
+			args = append(args, value)
+		}
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("channel")); value != "" {
+		if len(value) > 200 {
+			return nil, nil, errors.New("Bộ lọc không hợp lệ")
+		}
+		if value == "__empty" {
+			clauses = append(clauses, "trim(channel)=''")
+		} else {
+			clauses = append(clauses, "trim(channel)=?")
 			args = append(args, value)
 		}
 	}
@@ -240,6 +269,97 @@ func planFilter(r *http.Request) ([]string, []any, error) {
 		return nil, nil, errors.New("Ngày bắt đầu phải trước hoặc bằng ngày kết thúc")
 	}
 	return clauses, args, nil
+}
+
+func (a *api) planChannelGroupsForRequest(r *http.Request, me user) ([]planChannelGroup, error) {
+	clone := r.Clone(r.Context())
+	query := clone.URL.Query()
+	query.Del("id")
+	clone.URL.RawQuery = query.Encode()
+	clauses, args, err := planFilter(clone)
+	if err != nil {
+		return nil, err
+	}
+	if !me.IsLeader && !me.IsAdmin {
+		clauses = append(clauses, "assignee=?")
+		args = append(args, me.Email)
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	return a.planChannelGroups(r.Context(), where, args)
+}
+
+func (a *api) planChannelGroups(ctx context.Context, where string, args []any) ([]planChannelGroup, error) {
+	loc, err := time.LoadLocation("Asia/Ho_Chi_Minh")
+	if err != nil {
+		return nil, err
+	}
+	today := time.Now().In(loc).Format("2006-01-02")
+	rows, err := a.db.QueryContext(ctx, "SELECT trim(channel),status,post_date,assignee FROM content_plan"+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	groups := map[string]*planChannelGroup{}
+	owners := map[string]map[string]bool{}
+	for rows.Next() {
+		var key, status, postDate, assignee string
+		if err := rows.Scan(&key, &status, &postDate, &assignee); err != nil {
+			return nil, err
+		}
+		group := groups[key]
+		if group == nil {
+			name := key
+			if name == "" {
+				name = "Chưa gán Kênh"
+			}
+			group = &planChannelGroup{Key: key, Name: name, ByStatus: map[string]int{}, Assignees: []string{}}
+			groups[key] = group
+			owners[key] = map[string]bool{}
+		}
+		group.Total++
+		group.ByStatus[status]++
+		if assignee != "" && !owners[key][assignee] {
+			owners[key][assignee] = true
+			group.Assignees = append(group.Assignees, assignee)
+		}
+		if status != "Đã đăng" && postDate != "" {
+			if postDate < today {
+				group.Overdue++
+			} else {
+				group.Upcoming++
+				if group.NextPost == "" || postDate < group.NextPost {
+					group.NextPost = postDate
+				}
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]planChannelGroup, 0, len(groups))
+	for _, group := range groups {
+		sort.Strings(group.Assignees)
+		out = append(out, *group)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].NextPost == "" && out[j].NextPost != "" {
+			return false
+		}
+		if out[i].NextPost != "" && out[j].NextPost == "" {
+			return true
+		}
+		if out[i].NextPost != out[j].NextPost {
+			return out[i].NextPost < out[j].NextPost
+		}
+		if out[i].Total != out[j].Total {
+			return out[i].Total > out[j].Total
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
 }
 
 func (a *api) planReviews(ctx context.Context, planID string) ([]planReview, error) {
