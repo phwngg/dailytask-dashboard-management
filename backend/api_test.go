@@ -124,18 +124,21 @@ func TestAdminCanResetMemberPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &api{db: db}
-	req := httptest.NewRequest(http.MethodPatch, "/api/admin/users/member@example.com", bytes.NewBufferString(`{"password":"new-member-password"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/users/member@example.com", bytes.NewBufferString(`{"password":"new-member-password","position":"Content"}`))
 	req.SetPathValue("email", "member@example.com")
 	w := httptest.NewRecorder()
 	a.updateUser(w, req, user{Email: "owner@example.com", Caps: []string{"users.manage"}})
 	if w.Code != http.StatusOK {
 		t.Fatalf("reset password: got %d, body %s", w.Code, w.Body.String())
 	}
-	var hash string
-	if err := db.QueryRow("SELECT password_hash FROM users WHERE email=?", "member@example.com").Scan(&hash); err != nil {
+	var hash, position string
+	if err := db.QueryRow("SELECT password_hash,position FROM users WHERE email=?", "member@example.com").Scan(&hash, &position); err != nil {
 		t.Fatal(err)
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte("new-member-password")); err != nil {
 		t.Fatalf("new password was not stored: %v", err)
+	}
+	if position != "Content" {
+		t.Fatalf("position was not stored: %q", position)
 	}
 }

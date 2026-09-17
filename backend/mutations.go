@@ -364,6 +364,7 @@ func (a *api) updateUser(w http.ResponseWriter, r *http.Request, me user) {
 	}
 	var p struct {
 		Name     *string `json:"name"`
+		Position *string `json:"position"`
 		Active   *bool   `json:"active"`
 		Role     string  `json:"role"`
 		Password string  `json:"password"`
@@ -429,6 +430,12 @@ func (a *api) updateUser(w http.ResponseWriter, r *http.Request, me user) {
 			return
 		}
 		if _, err = tx.ExecContext(r.Context(), "UPDATE users SET name=? WHERE email=?", strings.TrimSpace(*p.Name), email); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	if p.Position != nil {
+		if _, err = tx.ExecContext(r.Context(), "UPDATE users SET position=? WHERE email=?", strings.TrimSpace(*p.Position), email); err != nil {
 			fail(w, err)
 			return
 		}
