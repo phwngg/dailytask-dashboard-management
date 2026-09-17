@@ -1,6 +1,7 @@
 import { dateWindow } from './overviewData.js'
 import { WorkOverview, WorkTasks, WorkCalendar, PlanDetails } from './WorkPages.jsx'
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { pancakeTopPosts } from './pancakeTopPosts.js'
 import { filterAdminUsers } from './adminFilters.js'
 
@@ -530,13 +531,14 @@ function groupPlanItems(items) {
 
 function PlanChannelDialog({channelName,group,items,total,loading,loadingMore,hasMore,loadMore,sentinel,loadError,personName,onClose,onSelectPlan}) {
   const byStatus = group?.by_status || {}
-  return <Modal title={`Chi tiết Kênh · ${channelName}`} className="plan-channel-modal" onClose={onClose}>
+  return <Modal title={`Chi tiết Kênh · ${channelName}`} className="plan-channel-modal" onClose={onClose} portal>
     <div className="plan-channel-modal-summary"><div className="plan-channel-detail-title"><i className="channel-card-icon">{channelName[0]||'K'}</i><div><span className="eyebrow">KẾ HOẠCH NỘI DUNG</span><h3>{channelName}</h3><p>{group?.total||total} nội dung trong bộ lọc hiện tại</p></div></div><div className="plan-channel-detail-stats"><span><b>{group?.upcoming||0}</b>Sắp đăng</span><span><b>{group?.overdue||0}</b>Đang trễ</span><span><b>{byStatus['Đã đăng']||0}</b>Đã đăng</span></div></div>
-    <div className="table-toolbar"><h3>Nội dung trong Kênh</h3><span>{items.length} / {total} nội dung</span></div>
-    <div className="simple-table plan-table plan-channel-detail-table"><div className="table-head"><span>CONTENT PILLAR / KEY</span><span>NGÀY ĐĂNG</span><span>PHỤ TRÁCH</span><span>TRẠNG THÁI</span></div>{items.map(p=><div className="table-row" key={p.id}><span className="plan-title"><button className="work-title" onClick={()=>onSelectPlan(p.id)}>{p.pillar||'Nội dung'}</button><small>{p.key}</small></span><span>{p.post_date||'—'}</span><span>{personName(p.assignee)}</span><Status value={p.status}/></div>)}{!items.length&&!loading&&<div className="plan-empty">{loadError?'Không tải được nội dung.':'Kênh này chưa có nội dung phù hợp.'}</div>}{loading&&!items.length&&<div className="plan-empty">Đang tải nội dung của Kênh…</div>}</div>
-    {loadError&&<div className="plan-load-error">{loadError}</div>}
-    {hasMore&&<div ref={sentinel} className="plan-load-trigger" aria-live="polite">{loadingMore?'Đang tải thêm nội dung…':<button className="secondary-button" onClick={loadMore}>Tải thêm</button>}</div>}
-    {!hasMore&&items.length>0&&<div className="plan-end-note">Đã hiển thị hết {total} nội dung phù hợp.</div>}
+    <div className="plan-channel-modal-list"><div className="table-toolbar"><h3>Nội dung trong Kênh</h3><span>{items.length} / {total} nội dung</span></div>
+      <div className="simple-table plan-table plan-channel-detail-table"><div className="table-head"><span>CONTENT PILLAR / KEY</span><span>NGÀY ĐĂNG</span><span>PHỤ TRÁCH</span><span>TRẠNG THÁI</span></div>{items.map(p=><div className="table-row" key={p.id}><span className="plan-title"><button className="work-title" onClick={()=>onSelectPlan(p.id)}>{p.pillar||'Nội dung'}</button><small>{p.key}</small></span><span>{p.post_date||'—'}</span><span>{personName(p.assignee)}</span><Status value={p.status}/></div>)}{!items.length&&!loading&&<div className="plan-empty">{loadError?'Không tải được nội dung.':'Kênh này chưa có nội dung phù hợp.'}</div>}{loading&&!items.length&&<div className="plan-empty">Đang tải nội dung của Kênh…</div>}</div>
+      {loadError&&<div className="plan-load-error">{loadError}</div>}
+      {hasMore&&<div ref={sentinel} className="plan-load-trigger" aria-live="polite">{loadingMore?'Đang tải thêm nội dung…':<button className="secondary-button" onClick={loadMore}>Tải thêm</button>}</div>}
+      {!hasMore&&items.length>0&&<div className="plan-end-note">Đã hiển thị hết {total} nội dung phù hợp.</div>}
+    </div>
     <div className="plan-channel-modal-footer"><button className="text-button" onClick={onClose}>← Tất cả Kênh</button></div>
   </Modal>
 }
@@ -1252,10 +1254,11 @@ function PlanModal({plan,users,me,onClose,onSave}) {
   return <Modal title={editing?'Chỉnh sửa nội dung':'Thêm nội dung vào kế hoạch'} onClose={onClose}><form className="modal-form" onSubmit={submit}><label>Content Pillar<input autoFocus value={form.pillar} onChange={e=>change('pillar',e.target.value)} placeholder="Ví dụ: Behind the scenes" required/></label><label>Ý tưởng / Key<input value={form.key} onChange={e=>change('key',e.target.value)} placeholder="Mô tả ngắn nội dung"/></label><div className="form-two"><label>Kênh<input value={form.channel} onChange={e=>change('channel',e.target.value)}/></label><label>Người phụ trách{canAssign?<select value={form.assignee} onChange={e=>change('assignee',e.target.value)}>{users.map(u=><option value={u.email} key={u.email}>{u.name}</option>)}</select>:<input value={users.find(u=>u.email===form.assignee)?.name||me?.name||me?.email||''} readOnly/>}</label></div><div className="form-two"><label>Ngày gửi demo<input type="date" value={form.demo_date} onChange={e=>change('demo_date',e.target.value)}/></label><label>Ngày đăng<input type="date" value={form.post_date} onChange={e=>change('post_date',e.target.value)}/></label></div><label>Thông điệp<textarea value={form.message} onChange={e=>change('message',e.target.value)} rows="3" placeholder="Thông điệp chính của nội dung"/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Huỷ</button>{saveError&&<p role="alert" className="form-error">{saveError}</p>}<button className="primary-button" disabled={saving}>{saving?'Đang lưu…':editing?'Lưu thay đổi':'Thêm vào kế hoạch'}</button></div></form></Modal>
 }
 
-function Modal({title,onClose,children,className=''}) {
+function Modal({title,onClose,children,className='',portal=false}) {
   const dialog=useRef(null)
   useEffect(()=>{const node=dialog.current;node.showModal();return()=>node.close()},[])
-  return <dialog ref={dialog} className={`modal-card work-form-dialog ${className}`} aria-label={title} onCancel={onClose} onClick={e=>e.target===e.currentTarget&&onClose()}><div className="modal-title"><div><span className="eyebrow">DAILYTASK</span><h2>{title}</h2></div><button className="icon-button" aria-label="Đóng" onClick={onClose}>×</button></div>{children}</dialog>
+  const content=<dialog ref={dialog} className={`modal-card work-form-dialog ${className}`} aria-label={title} onCancel={onClose} onClick={e=>e.target===e.currentTarget&&onClose()}><div className="modal-title"><div><span className="eyebrow">DAILYTASK</span><h2>{title}</h2></div><button className="icon-button" aria-label="Đóng" onClick={onClose}>×</button></div>{children}</dialog>
+  return portal ? createPortal(content, document.body) : content
 }
 
 export default App
