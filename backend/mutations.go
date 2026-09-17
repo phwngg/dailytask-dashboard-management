@@ -68,6 +68,7 @@ func (a *api) createTask(w http.ResponseWriter, r *http.Request, me user) {
 		fail(w, err)
 		return
 	}
+	a.clearOverviewTrendCache()
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
 }
 
@@ -166,6 +167,7 @@ func (a *api) updateTask(w http.ResponseWriter, r *http.Request, me user) {
 		fail(w, err)
 		return
 	}
+	a.clearOverviewTrendCache()
 	writeJSON(w, http.StatusOK, current)
 }
 
@@ -184,6 +186,7 @@ func (a *api) deleteTask(w http.ResponseWriter, r *http.Request, me user) {
 		writeError(w, http.StatusNotFound, "Không tìm thấy công việc")
 		return
 	}
+	a.clearOverviewTrendCache()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -235,6 +238,7 @@ func (a *api) createPlan(w http.ResponseWriter, r *http.Request, me user) {
 		fail(w, err)
 		return
 	}
+	a.clearOverviewTrendCache()
 	writeJSON(w, http.StatusCreated, map[string]string{"id": p.ID})
 }
 
@@ -294,6 +298,7 @@ func (a *api) updatePlan(w http.ResponseWriter, r *http.Request, me user) {
 		fail(w, err)
 		return
 	}
+	a.clearOverviewTrendCache()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -389,6 +394,7 @@ func (a *api) reviewPlan(w http.ResponseWriter, r *http.Request, me user) {
 		fail(w, err)
 		return
 	}
+	a.clearOverviewTrendCache()
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "status": newStatus})
 }
 
@@ -407,6 +413,7 @@ func (a *api) deletePlan(w http.ResponseWriter, r *http.Request, me user) {
 		writeError(w, http.StatusNotFound, "Không tìm thấy nội dung")
 		return
 	}
+	a.clearOverviewTrendCache()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -492,6 +499,7 @@ func (a *api) createSchedule(w http.ResponseWriter, r *http.Request, me user) {
 		fail(w, err)
 		return
 	}
+	a.clearOverviewTrendCache()
 	writeJSON(w, http.StatusCreated, map[string]any{"id": p.ID, "calendar": false, "mail": false, "warn": "Calendar/email chưa được cấu hình trong bản Go."})
 }
 

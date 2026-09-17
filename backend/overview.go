@@ -17,23 +17,26 @@ type overviewMetrics struct {
 
 type overviewProgressPoint struct {
 	Date      string `json:"date"`
-	Rate      *int   `json:"rate"`
+	EndDate   string `json:"endDate"`
+	Due       int    `json:"due"`
+	Content   int    `json:"content"`
 	Completed int    `json:"completed"`
-	Total     int    `json:"total"`
-}
-
-type overviewProgressWeek struct {
-	WeekStart string                  `json:"weekStart"`
-	WeekEnd   string                  `json:"weekEnd"`
-	Total     int                     `json:"total"`
-	Completed int                     `json:"completed"`
-	Points    []overviewProgressPoint `json:"points"`
+	Overdue   int    `json:"overdue"`
 }
 
 type overviewProgressTrend struct {
-	Previous overviewProgressWeek `json:"previous"`
-	Current  overviewProgressWeek `json:"current"`
+	Range    string                  `json:"range"`
+	Points   []overviewProgressPoint `json:"points"`
+	Previous overviewProgressPoint   `json:"previous"`
+	Current  overviewProgressPoint   `json:"current"`
 }
+
+type overviewTrendCacheEntry struct {
+	Value     overviewProgressTrend
+	ExpiresAt time.Time
+}
+
+const overviewTrendCacheTTL = 30 * time.Second
 
 type overviewProgress struct {
 	Total     int                   `json:"total"`
@@ -67,6 +70,7 @@ func (a *api) overview(w http.ResponseWriter, r *http.Request, me user) {
 	through := now.AddDate(0, 0, 6).Format("2006-01-02")
 	sunday := monday.AddDate(0, 0, 6).Format("2006-01-02")
 	assignee := strings.TrimSpace(r.URL.Query().Get("assignee"))
+	trendWeeks, trendRange := overviewTrendRange(r.URL.Query().Get("range"))
 	if !me.IsLeader && !hasCap(me.Caps, "checklist.viewAll") {
 		assignee = me.Email
 	}
@@ -90,6 +94,8 @@ func (a *api) overview(w http.ResponseWriter, r *http.Request, me user) {
 		{&out.Metrics.Overdue, "SELECT count(*) FROM tasks" + whereOpen + " AND due_date<>'' AND due_date<?", append(append([]any{}, argsOpen...), today)},
 		{&out.Metrics.Today, "SELECT count(*) FROM tasks" + whereOpen + " AND due_date=?", append(append([]any{}, argsOpen...), today)},
 		{&out.Metrics.CompletedWeek, "SELECT count(*) FROM tasks" + where + " AND status='done' AND date(done_at,'+7 hours') BETWEEN ? AND ?", append(append([]any{}, args...), out.Monday, out.Sunday)},
+		{&out.Progress.Total, "SELECT count(*) FROM tasks" + where + " AND due_date BETWEEN ? AND ?", append(append([]any{}, args...), out.Monday, out.Sunday)},
+		{&out.Progress.Completed, "SELECT count(*) FROM tasks" + where + " AND status='done' AND due_date BETWEEN ? AND ?", append(append([]any{}, args...), out.Monday, out.Sunday)},
 	}
 	for _, item := range queries {
 		if err := a.db.QueryRowContext(r.Context(), item.query, item.args...).Scan(item.target); err != nil {
@@ -97,14 +103,13 @@ func (a *api) overview(w http.ResponseWriter, r *http.Request, me user) {
 			return
 		}
 	}
-	out.Progress.Trend, err = a.overviewProgressTrend(r.Context(), assignee, monday, today)
+	canViewContent := me.IsAdmin || hasCap(me.Caps, "plan.view")
+	out.Progress.Trend, err = a.overviewProgressTrend(r.Context(), assignee, monday, today, trendWeeks, trendRange, canViewContent)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	out.Progress.Total = out.Progress.Trend.Current.Total
-	out.Progress.Completed = out.Progress.Trend.Current.Completed
-	if me.IsAdmin || hasCap(me.Caps, "plan.view") {
+	if canViewContent {
 		planWhere, planArgs := overviewAssignee(assignee)
 		if err := a.db.QueryRowContext(r.Context(), "SELECT count(*) FROM content_plan"+planWhere+" AND status<>? AND post_date BETWEEN ? AND ?", append(append(append([]any{}, planArgs...), "Đã đăng"), today, through)...).Scan(&out.Metrics.Content7Days); err != nil {
 			fail(w, err)
@@ -134,18 +139,46 @@ func (a *api) overview(w http.ResponseWriter, r *http.Request, me user) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+func overviewTrendRange(raw string) (int, string) {
+	switch strings.TrimSpace(raw) {
+	case "2w":
+		return 2, "2w"
+	case "8w":
+		return 8, "8w"
+	case "3m":
+		return 13, "3m"
+	default:
+		return 4, "4w"
+	}
+}
+
 type overviewTrendTask struct {
 	DueDate       string
 	Status        string
 	CompletedDate string
 }
 
-func (a *api) overviewProgressTrend(ctx context.Context, assignee string, monday time.Time, today string) (overviewProgressTrend, error) {
-	previousMonday := monday.AddDate(0, 0, -7)
-	weekEnd := monday.AddDate(0, 0, 6)
+type overviewTrendContent struct {
+	PostDate string
+	Status   string
+}
+
+func (a *api) overviewProgressTrend(ctx context.Context, assignee string, monday time.Time, today string, weeks int, rangeKey string, includeContent bool) (overviewProgressTrend, error) {
+	cacheKey := assignee + "|" + monday.Format("2006-01-02") + "|" + rangeKey + "|" + map[bool]string{true: "content", false: "tasks"}[includeContent]
+	now := time.Now()
+	a.overviewTrendMu.Lock()
+	if entry, ok := a.overviewTrendCache[cacheKey]; ok && now.Before(entry.ExpiresAt) {
+		a.overviewTrendMu.Unlock()
+		return entry.Value, nil
+	}
+	a.overviewTrendMu.Unlock()
+
+	base := time.Date(monday.Year(), monday.Month(), monday.Day(), 0, 0, 0, 0, monday.Location())
+	start := base.AddDate(0, 0, -7*(weeks-1))
+	end := monday.AddDate(0, 0, 6)
 	where, args := overviewAssignee(assignee)
-	args = append(args, previousMonday.Format("2006-01-02"), weekEnd.Format("2006-01-02"))
-	rows, err := a.db.QueryContext(ctx, "SELECT due_date,status,coalesce(date(done_at,'+7 hours'),'') FROM tasks"+where+" AND due_date BETWEEN ? AND ?", args...)
+	args = append(args, start.Format("2006-01-02"), end.Format("2006-01-02"), start.Format("2006-01-02"), end.Format("2006-01-02"))
+	rows, err := a.db.QueryContext(ctx, "SELECT due_date,status,coalesce(date(done_at,'+7 hours'),'') FROM tasks"+where+" AND (due_date BETWEEN ? AND ? OR date(done_at,'+7 hours') BETWEEN ? AND ?)", args...)
 	if err != nil {
 		return overviewProgressTrend{}, err
 	}
@@ -161,43 +194,85 @@ func (a *api) overviewProgressTrend(ctx context.Context, assignee string, monday
 	if err := rows.Err(); err != nil {
 		return overviewProgressTrend{}, err
 	}
-	return overviewProgressTrend{
-		Previous: buildOverviewProgressWeek(previousMonday, tasks, false, today),
-		Current:  buildOverviewProgressWeek(monday, tasks, true, today),
-	}, nil
+	contents := []overviewTrendContent{}
+	if includeContent {
+		planWhere, planArgs := overviewAssignee(assignee)
+		planArgs = append(planArgs, start.Format("2006-01-02"), end.Format("2006-01-02"))
+		planRows, err := a.db.QueryContext(ctx, "SELECT post_date,status FROM content_plan"+planWhere+" AND post_date BETWEEN ? AND ?", planArgs...)
+		if err != nil {
+			return overviewProgressTrend{}, err
+		}
+		for planRows.Next() {
+			var item overviewTrendContent
+			if err := planRows.Scan(&item.PostDate, &item.Status); err != nil {
+				planRows.Close()
+				return overviewProgressTrend{}, err
+			}
+			contents = append(contents, item)
+		}
+		if err := planRows.Err(); err != nil {
+			planRows.Close()
+			return overviewProgressTrend{}, err
+		}
+		planRows.Close()
+	}
+	points := buildOverviewProgressPoints(start, weeks, today, tasks, contents)
+	trend := overviewProgressTrend{Range: rangeKey, Points: points, Previous: points[weeks-2], Current: points[weeks-1]}
+	a.overviewTrendMu.Lock()
+	if a.overviewTrendCache == nil {
+		a.overviewTrendCache = make(map[string]overviewTrendCacheEntry)
+	}
+	a.overviewTrendCache[cacheKey] = overviewTrendCacheEntry{Value: trend, ExpiresAt: now.Add(overviewTrendCacheTTL)}
+	a.overviewTrendMu.Unlock()
+	return trend, nil
 }
 
-func buildOverviewProgressWeek(start time.Time, tasks []overviewTrendTask, current bool, today string) overviewProgressWeek {
-	end := start.AddDate(0, 0, 6)
-	startKey, endKey := start.Format("2006-01-02"), end.Format("2006-01-02")
-	weekTasks := make([]overviewTrendTask, 0)
-	for _, task := range tasks {
-		if task.DueDate >= startKey && task.DueDate <= endKey {
-			weekTasks = append(weekTasks, task)
-		}
+func buildOverviewProgressPoints(start time.Time, weeks int, today string, tasks []overviewTrendTask, contents []overviewTrendContent) []overviewProgressPoint {
+	points := make([]overviewProgressPoint, weeks)
+	for index := range points {
+		weekStart := start.AddDate(0, 0, index*7)
+		points[index] = overviewProgressPoint{Date: weekStart.Format("2006-01-02"), EndDate: weekStart.AddDate(0, 0, 6).Format("2006-01-02")}
 	}
-	week := overviewProgressWeek{WeekStart: startKey, WeekEnd: endKey, Total: len(weekTasks), Points: make([]overviewProgressPoint, 0, 7)}
-	for day := 0; day < 7; day++ {
-		date := start.AddDate(0, 0, day).Format("2006-01-02")
-		completed := 0
-		for _, task := range weekTasks {
-			if task.Status == "done" && task.CompletedDate != "" && task.CompletedDate <= date {
-				completed++
+	for _, task := range tasks {
+		if index := overviewTrendBucket(task.DueDate, start, weeks); index >= 0 {
+			points[index].Due++
+			if task.Status != "done" && task.DueDate < today {
+				points[index].Overdue++
 			}
 		}
-		point := overviewProgressPoint{Date: date, Completed: completed, Total: week.Total}
-		if week.Total > 0 && (!current || date <= today) {
-			rate := int((completed*100 + week.Total/2) / week.Total)
-			point.Rate = &rate
-		}
-		week.Points = append(week.Points, point)
-	}
-	for _, task := range weekTasks {
-		if task.Status == "done" && task.CompletedDate != "" && (!current || task.CompletedDate <= today) {
-			week.Completed++
+		if index := overviewTrendBucket(task.CompletedDate, start, weeks); index >= 0 {
+			points[index].Completed++
 		}
 	}
-	return week
+	for _, content := range contents {
+		if content.Status != "Đã đăng" {
+			if index := overviewTrendBucket(content.PostDate, start, weeks); index >= 0 {
+				points[index].Content++
+			}
+		}
+	}
+	return points
+}
+
+func overviewTrendBucket(value string, start time.Time, weeks int) int {
+	if value == "" {
+		return -1
+	}
+	date, err := time.ParseInLocation("2006-01-02", value, start.Location())
+	if err != nil {
+		return -1
+	}
+	days := int(date.Sub(start).Hours() / 24)
+	if days < 0 || days >= weeks*7 {
+		return -1
+	}
+	return days / 7
+}
+
+func (a *api) clearOverviewTrendCache() {
+	a.overviewTrendMu.Lock()
+	a.overviewTrendCache = nil
+	a.overviewTrendMu.Unlock()
 }
 
 func overviewAssignee(assignee string) (string, []any) {

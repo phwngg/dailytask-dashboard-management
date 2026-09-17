@@ -57,41 +57,44 @@ function TaskDetails({task,data,onStatus,onEdit,onDelete,onClose}) {
 
 function ProgressTrend({progress, fallbackTotal = 0, fallbackCompleted = 0}) {
   const trend = progress?.trend
-  const previous = trend?.previous
-  const current = trend?.current
-  if (!previous?.points?.length || !current?.points?.length) {
+  const points = trend?.points?.length ? trend.points : [trend?.previous, trend?.current].filter(Boolean)
+  const current = points.at(-1)
+  const previous = points.at(-2)
+  if (!current) {
     const fallbackRate = fallbackTotal ? Math.round(100 * fallbackCompleted / fallbackTotal) : 0
-    return <div className="progress-trend-empty"><b>{fallbackTotal ? `${fallbackCompleted}/${fallbackTotal} công việc hoàn thành (${fallbackRate}%)` : 'Chưa có công việc đến hạn trong tuần này.'}</b><span>Biểu đồ sẽ xuất hiện khi có dữ liệu theo tuần.</span></div>
+    return <div className="progress-trend-empty"><b>{fallbackTotal ? `${fallbackCompleted}/${fallbackTotal} công việc hoàn thành (${fallbackRate}%)` : 'Chưa có dữ liệu trong khoảng đã chọn.'}</b><span>Biểu đồ sẽ xuất hiện khi có công việc hoặc nội dung trong khoảng này.</span></div>
   }
-  const width = 720, height = 240, left = 40, right = 14, top = 18, bottom = 36
+  const width = 720, height = 260, left = 42, right = 16, top = 20, bottom = 38
   const chartWidth = width - left - right, chartHeight = height - top - bottom
-  const x = index => left + index * (chartWidth / 6)
-  const y = rate => top + (100 - rate) * chartHeight / 100
-  const rateOf = point => point?.rate == null ? null : Number(point.rate)
-  const path = week => week.points.map((point, index) => {
-    const rate = rateOf(point)
-    return rate == null ? null : `${x(index)},${y(rate)}`
-  }).filter(Boolean).join(' ')
-  const lastIndex = current.points.reduce((last, point, index) => rateOf(point) == null ? last : index, -1)
-  const currentRate = lastIndex >= 0 ? rateOf(current.points[lastIndex]) : null
-  const previousRate = lastIndex >= 0 ? rateOf(previous.points[lastIndex]) : null
-  const delta = currentRate == null || previousRate == null ? null : currentRate - previousRate
-  const deltaLabel = delta == null ? 'Chưa đủ dữ liệu so sánh' : `${delta > 0 ? '+' : ''}${delta} điểm so với tuần trước`
-  const days = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
+  const x = index => left + index * (chartWidth / Math.max(points.length - 1, 1))
+  const values = points.flatMap(point => [point.due, point.content, point.completed, point.overdue].map(Number))
+  const maxValue = Math.max(1, ...values)
+  const gridValues = [0, Math.ceil(maxValue / 2), maxValue].filter((value, index, list) => index === 0 || value !== list[index - 1])
+  const y = value => top + (maxValue - value) * chartHeight / maxValue
+  const series = [
+    ['due', 'Đến hạn', '#d99543'],
+    ['content', 'Cần đăng', '#8068df'],
+    ['completed', 'Hoàn thành', '#3aa77b'],
+    ['overdue', 'Quá hạn', '#df7469'],
+  ]
+  const path = (key, color) => <polyline className="progress-chart-line metric" style={{stroke:color}} points={points.map((point, index) => `${x(index)},${y(Number(point[key] || 0))}`).join(' ')}/>
+  const dateLabel = value => value ? value.slice(5).replace('-', '/') : ''
+  const delta = previous ? Number(current.completed || 0) - Number(previous.completed || 0) : null
+  const deltaLabel = delta == null ? 'Chưa đủ dữ liệu so sánh' : `${delta > 0 ? '+' : ''}${delta} hoàn thành so với tuần trước`
+  const rangeLabel = {'2w':'2 tuần','4w':'4 tuần','8w':'8 tuần','3m':'3 tháng'}[trend?.range] || '4 tuần'
   return <div className="progress-trend">
     <div className="progress-trend-summary">
-      <div><span className="progress-trend-kicker">TIẾN ĐỘ LŨY KẾ</span><strong>{currentRate == null ? '—' : `${currentRate}%`}</strong><small className={delta == null ? '' : delta >= 0 ? 'positive' : 'negative'}>{deltaLabel}</small></div>
-      <div className="progress-trend-legend"><span><i className="progress-legend-line previous"/>Tuần trước</span><span><i className="progress-legend-line current"/>Tuần này</span></div>
+      <div><span className="progress-trend-kicker">HOÀN THÀNH TRONG TUẦN GẦN NHẤT</span><strong>{current.completed || 0}</strong><small className={delta == null ? '' : delta >= 0 ? 'positive' : 'negative'}>{deltaLabel}</small></div>
+      <div className="progress-trend-legend">{series.map(([key, label, color]) => <span key={key}><i className="progress-legend-line" style={{borderColor:color}}/>{label}</span>)}</div>
     </div>
     <div className="progress-chart-wrap">
-      <svg className="progress-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="So sánh tỷ lệ hoàn thành công việc theo ngày giữa tuần trước và tuần này">
-        <g className="progress-chart-grid">{[0, 25, 50, 75, 100].map(value => <g key={value}><line x1={left} x2={width - right} y1={y(value)} y2={y(value)}/><text x={left - 8} y={y(value) + 3}>{value}%</text></g>)}</g>
-        <polyline className="progress-chart-line previous" points={path(previous)}/>{previous.points.map((point, index) => { const rate = rateOf(point); return rate == null ? null : <circle className="progress-chart-point previous" key={`previous-${point.date}`} cx={x(index)} cy={y(rate)} r="3.5"/> })}
-        <polyline className="progress-chart-line current" points={path(current)}/>{current.points.map((point, index) => { const rate = rateOf(point); return rate == null ? null : <circle className="progress-chart-point current" key={`current-${point.date}`} cx={x(index)} cy={y(rate)} r="4"/> })}
-        <g className="progress-chart-days">{days.map((day, index) => <text key={day} x={x(index)} y={height - 10}>{day}</text>)}</g>
+      <svg className="progress-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="So sánh công việc đến hạn, nội dung cần đăng, công việc hoàn thành và công việc quá hạn theo tuần">
+        <g className="progress-chart-grid">{gridValues.map(value => <g key={value}><line x1={left} x2={width - right} y1={y(value)} y2={y(value)}/><text x={left - 8} y={y(value) + 3}>{value}</text></g>)}</g>
+        {series.map(([key, , color]) => <g key={key}>{path(key, color)}{points.map((point, index) => <circle className="progress-chart-point metric" style={{stroke:color}} key={`${key}-${point.date}`} cx={x(index)} cy={y(Number(point[key] || 0))} r="4"/>)}</g>)}
+        <g className="progress-chart-days">{points.map(point => <text key={point.date} x={x(points.indexOf(point))} y={height - 10}>{dateLabel(point.date)}</text>)}</g>
       </svg>
     </div>
-    <div className="progress-trend-foot"><span>{current.total ? `${current.completed}/${current.total} công việc đã hoàn thành` : 'Chưa có công việc đến hạn trong tuần này.'}</span><span>{current.weekStart} → {current.weekEnd}</span></div>
+    <div className="progress-trend-foot"><span>{current.date} → {current.endDate}</span><span>{rangeLabel} · {current.due || 0} đến hạn · {current.content || 0} cần đăng · {current.overdue || 0} quá hạn</span></div>
   </div>
 }
 
@@ -105,7 +108,7 @@ export function WorkOverview({data,overview,go,onAdd,params,onStatus}) {
   const metrics=overview?.metrics||{}
   const cards=[['Quá hạn',metrics.overdue??tasks.filter(t=>matchesTask(t,'overdue',dates)).length,'tasks',{view:'overdue'},'Cần xử lý trước'],['Đến hạn hôm nay',metrics.today??tasks.filter(t=>matchesTask(t,'today',dates)).length,'tasks',{view:'today'},formatVietnamDate(dates.today)],['Cần đăng trong 7 ngày tới',metrics.content7days??plans.length,'plan',{from:dates.today,to:dates.through,unpublished:'1'},`${formatVietnamDate(dates.today)} → ${formatVietnamDate(dates.through)}`],['Hoàn thành tuần này',metrics.completedWeek??tasks.filter(t=>matchesTask(t,'week',dates)).length,'tasks',{view:'week'},`${formatVietnamDate(dates.monday)} → ${formatVietnamDate(dates.sunday)}`]]
   const focus=priorityTasks(tasks,dates).slice(0,5),weekTasks=tasks.filter(t=>matchesTask(t,'dueweek',dates)),weekTotal=overview?.progress?.total??weekTasks.length,weekDone=overview?.progress?.completed??weekTasks.filter(t=>t.status==='done').length
-  return <div className="work-page"><div className="page-heading"><div><span className="eyebrow">{formatVietnamDate(dates.today)} · GIỜ VIỆT NAM</span><h1>Xin chào, {data.me.name}</h1><p>Việc cần xử lý và lịch sắp tới của bạn.</p></div><button className="primary-button" onClick={onAdd}>+ Tạo công việc</button></div><Scope data={data} value={scope} onChange={assignee=>go('overview',false,{assignee})}/><div className="metric-grid">{cards.map(([label,count,page,filters,period])=><button className="metric-card work-metric" key={label} onClick={()=>route(page,filters)}><span>{label}</span><strong>{count}</strong><small>{period}</small><b>Xem danh sách →</b></button>)}</div><section className="panel"><div className="panel-heading"><h2>Tiến độ việc đến hạn tuần này</h2><button className="text-button" onClick={()=>route('tasks',{view:'dueweek'})}>Xem danh sách →</button></div><ProgressTrend progress={overview?.progress} fallbackTotal={weekTotal} fallbackCompleted={weekDone}/></section><section className="panel"><div className="panel-heading"><h2>Việc cần xử lý</h2><button className="text-button" onClick={()=>route('tasks',{view:'open'})}>Xem tất cả →</button></div>{focus.map(t=><TaskRow key={t.id} task={t} data={data} open={()=>route('tasks',{id:t.id})} onStatus={onStatus}/>)}{!focus.length&&<p className="work-empty">Không có công việc đang mở trong phạm vi này.</p>}</section><section className="panel"><div className="panel-heading"><h2>Nội dung sắp đăng</h2><button className="text-button" onClick={()=>route('plan',{from:dates.today,to:dates.through,unpublished:'1'})}>Xem tất cả →</button></div>{plans.slice(0,5).map(p=><article key={p.id} className="work-row"><div><button className="work-title" onClick={()=>route('plan',{id:p.id})}>{p.key||p.pillar}</button><p>{p.channel} · {data.users.find(u=>u.email===p.assignee)?.name||p.assignee||'Chưa phân công'} · {p.post_date}</p></div><span className="status">{p.status}</span></article>)}{!plans.length&&<p className="work-empty">Chưa có nội dung cần đăng trong 7 ngày tới.</p>}</section><section className="panel"><div className="panel-heading"><h2>Lịch quay & họp sắp tới</h2><button className="text-button" onClick={()=>route('calendar',{from:dates.today})}>Xem tất cả →</button></div>{events.slice(0,5).map(e=><article className="work-row" key={e.id}><div><button className="work-title" onClick={()=>route('calendar',{id:e.id})}>{e.title}</button><p>{e.kindLabel} · {e.date} {e.time} · {e.location||'Chưa có địa điểm'} · {data.users.find(u=>u.email===e.lead)?.name||e.lead||'Chưa có người chủ trì'}</p></div></article>)}{!events.length&&<p className="work-empty">Chưa có lịch quay hoặc họp sắp tới.</p>}</section></div>
+  return <div className="work-page"><div className="page-heading"><div><span className="eyebrow">{formatVietnamDate(dates.today)} · GIỜ VIỆT NAM</span><h1>Xin chào, {data.me.name}</h1><p>Việc cần xử lý và lịch sắp tới của bạn.</p></div><button className="primary-button" onClick={onAdd}>+ Tạo công việc</button></div><Scope data={data} value={scope} onChange={assignee=>go('overview',false,{assignee,range:params.get('range')||'4w'})}/><div className="metric-grid">{cards.map(([label,count,page,filters,period])=><button className="metric-card work-metric" key={label} onClick={()=>route(page,filters)}><span>{label}</span><strong>{count}</strong><small>{period}</small><b>Xem danh sách →</b></button>)}</div><section className="panel"><div className="panel-heading"><h2>Phân tích tiến độ công việc</h2><div className="progress-heading-actions">{(data.me?.isAdmin||data.me?.isLeader)&&<label className="progress-range-control"><span>Khoảng xem</span><select value={overview?.progress?.trend?.range||params.get('range')||'4w'} onChange={e=>go('overview',true,{assignee:scope,range:e.target.value})}><option value="2w">2 tuần</option><option value="4w">4 tuần</option><option value="8w">8 tuần</option><option value="3m">3 tháng</option></select></label>}<button className="text-button" onClick={()=>route('tasks',{view:'dueweek'})}>Xem danh sách →</button></div></div><ProgressTrend progress={overview?.progress} fallbackTotal={weekTotal} fallbackCompleted={weekDone}/></section><section className="panel"><div className="panel-heading"><h2>Việc cần xử lý</h2><button className="text-button" onClick={()=>route('tasks',{view:'open'})}>Xem tất cả →</button></div>{focus.map(t=><TaskRow key={t.id} task={t} data={data} open={()=>route('tasks',{id:t.id})} onStatus={onStatus}/>)}{!focus.length&&<p className="work-empty">Không có công việc đang mở trong phạm vi này.</p>}</section><section className="panel"><div className="panel-heading"><h2>Nội dung sắp đăng</h2><button className="text-button" onClick={()=>route('plan',{from:dates.today,to:dates.through,unpublished:'1'})}>Xem tất cả →</button></div>{plans.slice(0,5).map(p=><article key={p.id} className="work-row"><div><button className="work-title" onClick={()=>route('plan',{id:p.id})}>{p.key||p.pillar}</button><p>{p.channel} · {data.users.find(u=>u.email===p.assignee)?.name||p.assignee||'Chưa phân công'} · {p.post_date}</p></div><span className="status">{p.status}</span></article>)}{!plans.length&&<p className="work-empty">Chưa có nội dung cần đăng trong 7 ngày tới.</p>}</section><section className="panel"><div className="panel-heading"><h2>Lịch quay & họp sắp tới</h2><button className="text-button" onClick={()=>route('calendar',{from:dates.today})}>Xem tất cả →</button></div>{events.slice(0,5).map(e=><article className="work-row" key={e.id}><div><button className="work-title" onClick={()=>route('calendar',{id:e.id})}>{e.title}</button><p>{e.kindLabel} · {e.date} {e.time} · {e.location||'Chưa có địa điểm'} · {data.users.find(u=>u.email===e.lead)?.name||e.lead||'Chưa có người chủ trì'}</p></div></article>)}{!events.length&&<p className="work-empty">Chưa có lịch quay hoặc họp sắp tới.</p>}</section></div>
 }
 
 export function WorkTasks({data,go,params,onAdd,onStatus,onEdit,onDelete}) {

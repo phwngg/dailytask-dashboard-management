@@ -148,8 +148,11 @@ function App() {
     if (!data || page !== 'overview' || demoMode) { setOverviewSummary(null); return }
     setOverviewSummary(null)
     let stale = false
-    const assignee = new URLSearchParams(routeSearch).get('assignee')
-    request('/overview' + (assignee ? '?assignee=' + encodeURIComponent(assignee) : ''))
+    const routeQuery = new URLSearchParams(routeSearch)
+    const apiQuery = new URLSearchParams()
+    if (routeQuery.get('assignee')) apiQuery.set('assignee', routeQuery.get('assignee'))
+    apiQuery.set('range', routeQuery.get('range') || '4w')
+    request('/overview?' + apiQuery.toString())
       .then(result => { if (!stale) setOverviewSummary(result) })
       .catch(e => { if (!stale) setError(e.message) })
     return () => { stale = true }

@@ -13,15 +13,18 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 type api struct {
-	db           *sql.DB
-	cookieSecure bool
-	pancakeKey   []byte
+	db                 *sql.DB
+	cookieSecure       bool
+	pancakeKey         []byte
+	overviewTrendMu    sync.Mutex
+	overviewTrendCache map[string]overviewTrendCacheEntry
 }
 
 type user struct {
