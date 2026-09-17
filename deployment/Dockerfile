@@ -15,7 +15,7 @@ RUN CGO_ENABLED=1 go build -trimpath -ldflags='-s -w' -o /out/api .
 COPY --from=web /src/frontend/dist /out/static
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates && addgroup -S -g 10001 app && adduser -S -D -H -u 10001 -G app app && mkdir -p /data /app/static && chown -R app:app /data /app
+RUN apk add --no-cache ca-certificates tzdata && addgroup -S -g 10001 app && adduser -S -D -H -u 10001 -G app app && mkdir -p /data /app/static && chown -R app:app /data /app
 WORKDIR /app
 COPY --from=build /out/api /app/api
 COPY --from=build --chown=app:app /out/static /app/static
