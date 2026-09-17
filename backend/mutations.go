@@ -37,6 +37,12 @@ func (a *api) createTask(w http.ResponseWriter, r *http.Request, me user) {
 		writeError(w, http.StatusBadRequest, "Thiếu tiêu đề công việc")
 		return
 	}
+	if p.DueDate != "" {
+		if _, err := time.Parse("2006-01-02", p.DueDate); err != nil {
+			writeError(w, http.StatusBadRequest, "Ngày đến hạn không hợp lệ")
+			return
+		}
+	}
 	assignee := me.Email
 	if me.IsLeader && p.Assignee != "" {
 		assignee = strings.ToLower(strings.TrimSpace(p.Assignee))

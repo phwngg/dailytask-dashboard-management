@@ -61,6 +61,10 @@ func (a *api) listPlans(w http.ResponseWriter, r *http.Request, me user) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !me.IsLeader && !me.IsAdmin {
+		clauses = append(clauses, "assignee=?")
+		args = append(args, me.Email)
+	}
 	where := ""
 	if len(clauses) > 0 {
 		where = " WHERE " + strings.Join(clauses, " AND ")
@@ -99,7 +103,13 @@ func (a *api) listPlans(w http.ResponseWriter, r *http.Request, me user) {
 	statusCounts.Close()
 	out.Stats.Total = out.Total
 
-	channelRows, err := a.db.QueryContext(r.Context(), "SELECT DISTINCT channel FROM content_plan WHERE channel<>'' ORDER BY channel")
+	optionScope := ""
+	optionArgs := []any{}
+	if !me.IsLeader && !me.IsAdmin {
+		optionScope = " AND assignee=?"
+		optionArgs = append(optionArgs, me.Email)
+	}
+	channelRows, err := a.db.QueryContext(r.Context(), "SELECT DISTINCT channel FROM content_plan WHERE channel<>''"+optionScope+" ORDER BY channel", optionArgs...)
 	if err != nil {
 		fail(w, err)
 		return
@@ -120,7 +130,7 @@ func (a *api) listPlans(w http.ResponseWriter, r *http.Request, me user) {
 		return
 	}
 	channelRows.Close()
-	statusRows, err := a.db.QueryContext(r.Context(), "SELECT DISTINCT status FROM content_plan WHERE status<>'' ORDER BY status")
+	statusRows, err := a.db.QueryContext(r.Context(), "SELECT DISTINCT status FROM content_plan WHERE status<>''"+optionScope+" ORDER BY status", optionArgs...)
 	if err != nil {
 		fail(w, err)
 		return
@@ -194,7 +204,7 @@ func planFilter(r *http.Request) ([]string, []any, error) {
 		clauses = append(clauses, "(content_key LIKE ? ESCAPE '\\' OR pillar LIKE ? ESCAPE '\\' OR message LIKE ? ESCAPE '\\')")
 		args = append(args, pattern, pattern, pattern)
 	}
-	for _, item := range []struct{ key, column string }{{"channel", "channel"}, {"assignee", "assignee"}, {"status", "status"}} {
+	for _, item := range []struct{ key, column string }{{"channel", "channel"}, {"assignee", "assignee"}, {"status", "status"}, {"id", "id"}} {
 		if value := strings.TrimSpace(r.URL.Query().Get(item.key)); value != "" {
 			if len(value) > 200 {
 				return nil, nil, errors.New("Bộ lọc không hợp lệ")
@@ -202,6 +212,10 @@ func planFilter(r *http.Request) ([]string, []any, error) {
 			clauses = append(clauses, item.column+"=?")
 			args = append(args, value)
 		}
+	}
+	if r.URL.Query().Get("unpublished") == "1" {
+		clauses = append(clauses, "status<>?")
+		args = append(args, "Đã đăng")
 	}
 	from, to := r.URL.Query().Get("from"), r.URL.Query().Get("to")
 	for _, item := range []struct{ value, clause string }{{from, "post_date>=?"}, {to, "post_date<=?"}} {

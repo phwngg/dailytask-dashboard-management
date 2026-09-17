@@ -36,15 +36,16 @@ func (a *api) bootstrap(w http.ResponseWriter, r *http.Request, me user) {
 		fail(w, err)
 		return
 	}
-	plans, err := a.planPreview(ctx)
+	plans, err := a.planPreview(ctx, me)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	var pendingPlanCount int
-	if err := a.db.QueryRowContext(ctx, "SELECT count(*) FROM content_plan WHERE status<>?", "Đã đăng").Scan(&pendingPlanCount); err != nil {
-		fail(w, err)
-		return
+	pendingPlanCount := 0
+	for _, p := range plans {
+		if p.Status != "Đã đăng" {
+			pendingPlanCount++
+		}
 	}
 	shoots, lives, err := a.schedules(ctx)
 	if err != nil {
@@ -55,6 +56,36 @@ func (a *api) bootstrap(w http.ResponseWriter, r *http.Request, me user) {
 	if err != nil {
 		fail(w, err)
 		return
+	}
+	if !me.IsLeader && !hasCap(me.Caps, "checklist.viewAll") {
+		allowed := func(lead string, attendees []string) bool {
+			if lead == me.Email {
+				return true
+			}
+			for _, email := range attendees {
+				if email == me.Email {
+					return true
+				}
+			}
+			return false
+		}
+		ownShoots, ownLives, ownMeetings := []schedule{}, []schedule{}, []meeting{}
+		for _, item := range shoots {
+			if allowed(item.Lead, item.Attendees) {
+				ownShoots = append(ownShoots, item)
+			}
+		}
+		for _, item := range lives {
+			if allowed(item.Lead, item.Attendees) {
+				ownLives = append(ownLives, item)
+			}
+		}
+		for _, item := range meetings {
+			if allowed("", item.Attendees) {
+				ownMeetings = append(ownMeetings, item)
+			}
+		}
+		shoots, lives, meetings = ownShoots, ownLives, ownMeetings
 	}
 	channels, err := a.channels(ctx)
 	if err != nil {
@@ -126,10 +157,10 @@ func (a *api) users(ctx context.Context) ([]user, error) {
 }
 
 func (a *api) tasks(ctx context.Context, me user) ([]task, error) {
-	query := "SELECT id,title,assignee,due,due_date,priority,status,kpi_key,qty,done_at,schedule_id FROM tasks ORDER BY created_at DESC LIMIT 500"
+	query := "SELECT id,title,assignee,due,due_date,priority,status,kpi_key,qty,done_at,schedule_id FROM tasks ORDER BY created_at DESC"
 	args := []any{}
 	if !me.IsLeader && !hasCap(me.Caps, "checklist.viewAll") {
-		query = "SELECT id,title,assignee,due,due_date,priority,status,kpi_key,qty,done_at,schedule_id FROM tasks WHERE assignee=? ORDER BY created_at DESC LIMIT 500"
+		query = "SELECT id,title,assignee,due,due_date,priority,status,kpi_key,qty,done_at,schedule_id FROM tasks WHERE assignee=? ORDER BY created_at DESC"
 		args = append(args, me.Email)
 	}
 	rows, err := a.db.QueryContext(ctx, query, args...)
@@ -148,8 +179,18 @@ func (a *api) tasks(ctx context.Context, me user) ([]task, error) {
 	return out, rows.Err()
 }
 
-func (a *api) planPreview(ctx context.Context) ([]plan, error) {
-	rows, err := a.db.QueryContext(ctx, "SELECT id,channel,month,pillar,content_key,demo_date,post_date,status,message,assignee FROM content_plan WHERE status<>'Đã đăng' ORDER BY post_date DESC,id DESC LIMIT 3")
+// ponytail: load the complete small-workspace dataset; use aggregate queries and pagination when payload size grows.
+func (a *api) planPreview(ctx context.Context, me user) ([]plan, error) {
+	if !me.IsAdmin && !hasCap(me.Caps, "plan.view") {
+		return []plan{}, nil
+	}
+	query := "SELECT id,channel,month,pillar,content_key,demo_date,post_date,status,message,assignee FROM content_plan"
+	args := []any{}
+	if !me.IsLeader {
+		query += " WHERE assignee=?"
+		args = append(args, me.Email)
+	}
+	rows, err := a.db.QueryContext(ctx, query+" ORDER BY post_date,id", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +207,7 @@ func (a *api) planPreview(ctx context.Context) ([]plan, error) {
 }
 
 func (a *api) schedules(ctx context.Context) ([]schedule, []schedule, error) {
-	rows, err := a.db.QueryContext(ctx, "SELECT id,kind,title,date,time,location,lead,attendees,status,kpi_key,qty,done,brief FROM schedules ORDER BY date DESC,time DESC LIMIT 500")
+	rows, err := a.db.QueryContext(ctx, "SELECT id,kind,title,date,time,location,lead,attendees,status,kpi_key,qty,done,brief FROM schedules ORDER BY date DESC,time DESC")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -206,7 +247,7 @@ func (a *api) channels(ctx context.Context) ([]channelMapping, error) {
 }
 
 func (a *api) meetings(ctx context.Context) ([]meeting, error) {
-	rows, err := a.db.QueryContext(ctx, "SELECT id,title,date,time,attendees,duration,repeat,note FROM meetings ORDER BY date DESC,time DESC LIMIT 500")
+	rows, err := a.db.QueryContext(ctx, "SELECT id,title,date,time,attendees,duration,repeat,note FROM meetings ORDER BY date DESC,time DESC")
 	if err != nil {
 		return nil, err
 	}
