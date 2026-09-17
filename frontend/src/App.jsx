@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { pancakeTopPosts } from './pancakeTopPosts.js'
+import { filterAdminUsers } from './adminFilters.js'
 
 const nav = [
   ['overview', 'Tổng quan', '◫'],
@@ -1073,23 +1074,25 @@ function CalendarPage({data}) {
 
 function AdminPage({data,users,loading,onRefresh,onSave,onUpdate}) {
   const [filter, setFilter] = useState('all')
+  const [memberFilter, setMemberFilter] = useState('all')
+  const [positionFilter, setPositionFilter] = useState('all')
+  const [roleFilter, setRoleFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [editor, setEditor] = useState(null)
   const [showRoles, setShowRoles] = useState(false)
   const [busyEmail, setBusyEmail] = useState('')
   const currentEmail = (data.me?.email || '').toLowerCase()
   const roleLabel = role => role === 'admin' ? 'Quản trị viên' : 'Nhân viên'
+  const positions = [...new Set(users.map(user => user.position?.trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'vi'))
+  const roles = [...new Set(users.map(user => user.role).filter(Boolean))]
   const counts = {
     all: users.length,
     active: users.filter(user => user.active !== false).length,
     inactive: users.filter(user => user.active === false).length,
   }
-  const visibleUsers = users.filter(user => {
-    const matchesFilter = filter === 'all' || (filter === 'active' ? user.active !== false : user.active === false)
-    const needle = search.trim().toLowerCase()
-    const matchesSearch = !needle || [user.name, user.email, user.position, roleLabel(user.role)].some(value => String(value || '').toLowerCase().includes(needle))
-    return matchesFilter && matchesSearch
-  })
+  const visibleUsers = filterAdminUsers(users, { status:filter, member:memberFilter, position:positionFilter, role:roleFilter, query:search })
+  const hasFilters = filter !== 'all' || memberFilter !== 'all' || positionFilter !== 'all' || roleFilter !== 'all' || search.trim() !== ''
+  const clearFilters = () => { setFilter('all'); setMemberFilter('all'); setPositionFilter('all'); setRoleFilter('all'); setSearch('') }
   const changeStatus = async user => {
     if (user.email.toLowerCase() === currentEmail) return
     const nextActive = user.active === false
@@ -1108,8 +1111,15 @@ function AdminPage({data,users,loading,onRefresh,onSave,onUpdate}) {
       </div>
     </section>
     <section className="panel table-panel admin-members-panel">
-      <div className="table-toolbar admin-toolbar"><div><h2>Danh sách thành viên</h2><p>Chỉ người có quyền Quản trị viên mới thấy và thay đổi phần này.</p></div><div className="admin-toolbar-actions"><label className="member-search"><Icon name="search"/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Tìm tên hoặc email" aria-label="Tìm thành viên"/></label><button className="secondary-button" onClick={() => setShowRoles(value => !value)}>{showRoles ? 'Ẩn hướng dẫn' : 'Xem quyền'} <span>⌄</span></button><button className="icon-button" onClick={() => onRefresh().catch(() => {})} disabled={loading} title="Làm mới danh sách" aria-label="Làm mới danh sách">↻</button></div></div>
-      <div className="admin-filters" role="tablist" aria-label="Lọc thành viên">{[['all','Tất cả'],['active','Đang hoạt động'],['inactive','Đã khóa']].map(([key,label]) => <button key={key} className={filter === key ? 'selected' : ''} onClick={() => setFilter(key)} role="tab" aria-selected={filter === key}>{label} <b>{counts[key]}</b></button>)}</div>
+      <div className="table-toolbar admin-toolbar"><div><h2>Danh sách thành viên</h2><p>Chỉ người có quyền Quản trị viên mới thấy và thay đổi phần này.</p></div><div className="admin-toolbar-actions"><label className="member-search"><Icon name="search"/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Tìm tên hoặc email" aria-label="Tìm tên hoặc email thành viên"/></label><button className="secondary-button" onClick={() => setShowRoles(value => !value)}>{showRoles ? 'Ẩn hướng dẫn' : 'Xem quyền'} <span>⌄</span></button><button className="icon-button" onClick={() => onRefresh().catch(() => {})} disabled={loading} title="Làm mới danh sách" aria-label="Làm mới danh sách">↻</button></div></div>
+      <div className="admin-filters" role="tablist" aria-label="Lọc theo trạng thái">{[['all','Tất cả'],['active','Đang hoạt động'],['inactive','Đã khóa']].map(([key,label]) => <button key={key} className={filter === key ? 'selected' : ''} onClick={() => setFilter(key)} role="tab" aria-selected={filter === key}>{label} <b>{counts[key]}</b></button>)}</div>
+      <div className="admin-filter-controls">
+        <label>Thành viên<select value={memberFilter} onChange={event => setMemberFilter(event.target.value)}><option value="all">Tất cả thành viên</option>{users.map(user => <option key={user.email} value={user.email}>{user.name || user.email}</option>)}</select></label>
+        <label>Vị trí<select value={positionFilter} onChange={event => setPositionFilter(event.target.value)}><option value="all">Tất cả vị trí</option>{positions.map(position => <option key={position} value={position}>{position}</option>)}{users.some(user => !user.position?.trim()) && <option value="__empty__">Chưa có vị trí</option>}</select></label>
+        <label>Vai trò<select value={roleFilter} onChange={event => setRoleFilter(event.target.value)}><option value="all">Tất cả vai trò</option>{roles.map(role => <option key={role} value={role}>{roleLabel(role)}</option>)}</select></label>
+        <span className="admin-filter-result">Hiển thị {visibleUsers.length}/{users.length} thành viên</span>
+        {hasFilters && <button className="text-button admin-clear-filters" onClick={clearFilters}>Xóa bộ lọc</button>}
+      </div>
       {loading && <div className="admin-empty"><span className="loader"/> Đang tải danh sách thành viên…</div>}
       {!loading && <div className="simple-table admin-table"><div className="table-head"><span>THÀNH VIÊN</span><span>EMAIL</span><span>VỊ TRÍ</span><span>VAI TRÒ</span><span>TRẠNG THÁI</span><span>THAO TÁC</span></div>{visibleUsers.map(user => { const isSelf = user.email.toLowerCase() === currentEmail; const busy = busyEmail === user.email; return <div className="table-row" key={user.email}><span className="title-cell"><Avatar user={user}/><b>{user.name || 'Chưa đặt tên'}</b>{isSelf && <small className="self-label">Bạn</small>}</span><span>{user.email}</span><span>{user.position || '—'}</span><span>{roleLabel(user.role)}</span><Status value={user.active === false ? 'Đã khóa' : 'Đang hoạt động'}/><span className="admin-member-actions"><button className="row-action" onClick={() => setEditor({mode:'edit', user, isSelf})} disabled={busy} title="Sửa tên, vị trí, vai trò và mật khẩu">Sửa</button><button className="row-action danger" onClick={() => void changeStatus(user)} disabled={isSelf || busy} title={isSelf ? 'Bạn không thể khóa tài khoản của mình' : user.active === false ? 'Mở khóa tài khoản' : 'Khóa tài khoản'}>{busy ? '…' : user.active === false ? 'Mở khóa' : 'Khóa'}</button></span></div>})}{visibleUsers.length === 0 && <div className="admin-empty">Không tìm thấy thành viên phù hợp.</div>}</div>}
     </section>
