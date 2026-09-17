@@ -39,10 +39,11 @@ function Scope({data,value,onChange}) {
 }
 
 function TaskAction({task,me,onStatus}) {
-  const [busy,setBusy]=useState(false),[error,setError]=useState('')
+  const [busy,setBusy]=useState(false),[pendingStatus,setPendingStatus]=useState(''),[error,setError]=useState('')
   if(!me.isLeader&&task.assignee!==me.email)return null
-  const update=async status=>{setBusy(true);setError('');try{await onStatus(task.id,status)}catch(e){setError(e.message)}finally{setBusy(false)}}
-  return <div className="work-actions">{task.status==='todo'&&<button className="secondary-button" disabled={busy} onClick={()=>update('doing')}>Bắt đầu</button>}{task.status!=='done'?<button className="primary-button" disabled={busy} onClick={()=>update('done')}>{busy?'Đang lưu…':'Hoàn thành'}</button>:<button className="secondary-button" disabled={busy} onClick={()=>update('todo')}>Mở lại</button>}{error&&<p role="alert" className="form-error">{error}</p>}</div>
+  const update=async status=>{setBusy(true);setPendingStatus(status);setError('');try{await onStatus(task.id,status)}catch(e){setError(e.message)}finally{setBusy(false);setPendingStatus('')}}
+  const busyLabel=status=>pendingStatus===status?(status==='doing'?'Đang bắt đầu…':status==='done'?'Đang hoàn thành…':'Đang mở lại…'):status==='doing'?'Bắt đầu':status==='done'?'Hoàn thành':'Mở lại'
+  return <div className="work-actions">{task.status==='todo'&&<button className="secondary-button" disabled={busy} onClick={()=>update('doing')}>{busyLabel('doing')}</button>}{task.status!=='done'?<button className="primary-button" disabled={busy} onClick={()=>update('done')}>{busyLabel('done')}</button>:<button className="secondary-button" disabled={busy} onClick={()=>update('todo')}>{busyLabel('todo')}</button>}{error&&<p role="alert" className="form-error">{error}</p>}</div>
 }
 function TaskRow({task,data,open,onStatus}) {
   return <article className="work-row"><div><button className="work-title" onClick={open}>{task.title}</button><p>{data.users.find(u=>u.email===task.assignee)?.name||task.assignee} · {task.due_date||'Chưa đặt hạn'} · Ưu tiên {task.priority||'Vừa'}</p></div><TaskAction task={task} me={data.me} onStatus={onStatus}/></article>

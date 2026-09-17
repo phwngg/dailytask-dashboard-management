@@ -57,14 +57,24 @@ const initialPage = () => routePages[window.location.pathname] || 'overview'
 const demoLogin = demo ? { ...demo } : null
 
 async function request(path, options = {}) {
-  const response = await fetch('/api' + path, {
-    credentials: 'include',
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-  })
-  const body = response.status === 204 ? null : await response.json()
-  if (!response.ok) throw new Error(body?.error || 'Không thể xử lý yêu cầu')
-  return body
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 15000)
+  try {
+    const response = await fetch('/api' + path, {
+      credentials: 'include',
+      ...options,
+      signal: options.signal || controller.signal,
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    })
+    const body = response.status === 204 ? null : await response.json()
+    if (!response.ok) throw new Error(body?.error || 'Không thể xử lý yêu cầu')
+    return body
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('Hệ thống phản hồi quá lâu. Vui lòng thử lại.')
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function Icon({ name }) {
@@ -105,6 +115,7 @@ function App() {
   const [error, setError] = useState('')
   const [demoMode, setDemoMode] = useState(!import.meta.env.PROD && import.meta.env.VITE_DEMO === 'true')
   const [modal, setModal] = useState('')
+  const [helpOpen, setHelpOpen] = useState(false)
   const [taskEditor, setTaskEditor] = useState(null)
   const [planEditor, setPlanEditor] = useState(null)
   const [query, setQuery] = useState('')
@@ -305,8 +316,8 @@ function App() {
       return
     }
     try {
-      await request('/tasks/' + encodeURIComponent(id), { method:'PATCH', body:JSON.stringify({ status }) })
-      await load()
+      const updated = await request('/tasks/' + encodeURIComponent(id), { method:'PATCH', body:JSON.stringify({ status }) })
+      setData(current => current ? { ...current, tasks:(current.tasks || []).map(task => task.id === id ? { ...task, ...updated } : task) } : current)
     } catch (e) { setError(e.message); throw e }
   }
 
@@ -409,7 +420,7 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="help-card"><span className="help-icon">✦</span><b>Cần trợ giúp?</b><p>Xem hướng dẫn sử dụng DailyTask.</p><button onClick={() => setError('Hướng dẫn sẽ được bổ sung.')}>Mở trung tâm trợ giúp <Icon name="chevron"/></button></div>
+          <div className="help-card"><span className="help-icon">✦</span><b>Cần trợ giúp?</b><p>Xem hướng dẫn sử dụng DailyTask.</p><button onClick={() => setHelpOpen(true)}>Mở hướng dẫn nhanh <Icon name="chevron"/></button></div>
           <button className="profile-row" onClick={logout}><Avatar user={data.me}/><span className="profile-text"><b>{data.me?.name || 'Thành viên'}</b><small>{data.me?.role === 'admin' ? 'Quản trị viên' : 'Thành viên'}</small></span><Icon name="logout"/></button>
         </div>
       </aside>
@@ -419,7 +430,7 @@ function App() {
           <div className="breadcrumb"><button onClick={() => navigate('overview')}>Daily Studio</button><Icon name="chevron"/><b>{current}</b></div>
           <div className="top-actions">
             <label className="search-box"><Icon name="search"/><input value={page==='plan'||page==='tasks'?new URLSearchParams(routeSearch).get('q')||'':query} onChange={e=>{if(page==='plan'||page==='tasks')navigate(page,true,{...Object.fromEntries(new URLSearchParams(routeSearch)),q:e.target.value});else setQuery(e.target.value)}} onKeyDown={e=>{if(e.key==='Enter'&&page!=='plan'&&page!=='tasks')navigate('tasks',false,{q:query})}} placeholder="Tìm công việc, nội dung..." /><kbd>Enter</kbd></label>
-            <button className="icon-button notification"><Icon name="bell"/><i/></button>
+            <button className="icon-button notification" aria-label="Thông báo" disabled title="Thông báo sẽ được bổ sung"><Icon name="bell"/></button>
             <span className="today-chip"><Icon name="calendar"/>{today}</span>
             <details className="account-menu">
               <summary aria-label="Mở menu tài khoản"><Avatar user={data.me}/><span className="account-caret">⌄</span></summary>
@@ -444,9 +455,13 @@ function App() {
         </div>
       </main>
       {modal === 'task' && <TaskModal initialAssignee={new URLSearchParams(routeSearch).get('assignee')} users={data.users || []} me={data.me} onClose={()=>setModal('')} onSave={saveTask}/>}
-      {modal === 'plan' && <PlanModal users={data.users || []} me={data.me} onClose={()=>setModal('')} onSave={savePlan}/>}{taskEditor && <TaskModal task={taskEditor} users={data.users || []} me={data.me} onClose={()=>setTaskEditor(null)} onSave={saveTask}/>}{planEditor && <PlanModal plan={planEditor} users={data.users || []} me={data.me} onClose={()=>setPlanEditor(null)} onSave={savePlanEdit}/>}
+      {modal === 'plan' && <PlanModal users={data.users || []} me={data.me} onClose={()=>setModal('')} onSave={savePlan}/>} {helpOpen && <HelpModal onClose={()=>setHelpOpen(false)}/>}{taskEditor && <TaskModal task={taskEditor} users={data.users || []} me={data.me} onClose={()=>setTaskEditor(null)} onSave={saveTask}/>}{planEditor && <PlanModal plan={planEditor} users={data.users || []} me={data.me} onClose={()=>setPlanEditor(null)} onSave={savePlanEdit}/>}
     </div>
   )
+}
+
+function HelpModal({onClose}) {
+  return <Modal title="Hướng dẫn nhanh" onClose={onClose}><div className="quick-help"><p>Bắt đầu từ Tổng quan để xem việc cần xử lý trong ngày.</p><ol><li>Bấm một thẻ chỉ số để mở đúng danh sách đã lọc.</li><li>Chọn thành viên để xem riêng phạm vi công việc.</li><li>Bấm tên công việc hoặc nội dung để xem chi tiết.</li><li>Dùng Bắt đầu, Hoàn thành hoặc Gửi duyệt để cập nhật trạng thái.</li></ol><div className="modal-actions"><button className="primary-button" onClick={onClose}>Đã hiểu</button></div></div></Modal>
 }
 
 function Login({ onLogin, error, setDemo }) {
@@ -631,7 +646,7 @@ const payrollPolicyLabels={fixed:'Cố định theo tháng',per_unit:'Theo sản
 function PayrollPage({data,onCompute,demo}) {
   const rows=data.payroll||[]
   const canManage=!demo && Boolean(data.me?.isAdmin||data.me?.caps?.includes('payroll.compute'))
-  return <div><PageHeading eyebrow="TỔNG HỢP THU NHẬP" title="Lương thưởng" description="Kết quả KPI và thu nhập theo kỳ tính lương." action={<button className="secondary-button"><Icon name="calendar"/> {data.payrollMonth||'Chưa có kỳ lương'} <span>⌄</span></button>}/><div className="metric-grid three"><Metric label="Tổng quỹ lương" value={money(rows.reduce((s,r)=>s+Number(r.total||0),0))} delta="Kỳ hiện tại" color="purple" icon="₫"/><Metric label="KPI đạt trung bình" value={rows.length?Math.round(rows.reduce((s,r)=>s+Number(r.kpi_rate||0),0)/rows.length)+'%':'—'} delta="Toàn nhóm" color="green" icon="◉"/><Metric label="Thành viên" value={rows.length} delta="Trong kỳ" color="blue" icon="♙"/></div><section className="panel table-panel"><div className="table-toolbar"><h2>Bảng lương tháng {data.payrollMonth||''}</h2><div className="flex gap-2">{canManage&&<button className="secondary-button" onClick={onCompute}>Tính lại từ Policy</button>}<button className="secondary-button">Xuất báo cáo <Icon name="arrow"/></button></div></div><div className="simple-table payroll-table"><div className="table-head"><span>THÀNH VIÊN</span><span>LƯƠNG CƠ BẢN</span><span>PHỤ CẤP</span><span>THƯỞNG / PHẠT</span><span>KPI</span><span>TỔNG NHẬN</span></div>{rows.map(r=>{const u=data.users?.find(x=>x.email===r.email);return <div className="table-row" key={r.email}><span className="title-cell"><Avatar user={u}/><b>{u?.name||r.email}</b></span><span>{money(r.base)}</span><span>{money(r.fees)}</span><span>{money(Number(r.bonus||0)-Number(r.penalty||0))}</span><span><span className="kpi-mini"><i style={{width:(r.kpi_rate||0)+'%'}}/></span>{Math.round(r.kpi_rate||0)}%</span><b>{money(r.total)}</b></div>})}</div></section>{canManage&&<PayrollPolicyPanel users={data.users||[]}/>}</div>
+  return <div><PageHeading eyebrow="TỔNG HỢP THU NHẬP" title="Lương thưởng" description="Kết quả KPI và thu nhập theo kỳ tính lương." action={<button className="secondary-button" disabled title="Chưa có bộ chọn kỳ lương"><Icon name="calendar"/> {data.payrollMonth||'Chưa có kỳ lương'} <span>⌄</span></button>}/><div className="metric-grid three"><Metric label="Tổng quỹ lương" value={money(rows.reduce((s,r)=>s+Number(r.total||0),0))} delta="Kỳ hiện tại" color="purple" icon="₫"/><Metric label="KPI đạt trung bình" value={rows.length?Math.round(rows.reduce((s,r)=>s+Number(r.kpi_rate||0),0)/rows.length)+'%':'—'} delta="Toàn nhóm" color="green" icon="◉"/><Metric label="Thành viên" value={rows.length} delta="Trong kỳ" color="blue" icon="♙"/></div><section className="panel table-panel"><div className="table-toolbar"><h2>Bảng lương tháng {data.payrollMonth||''}</h2><div className="flex gap-2">{canManage&&<button className="secondary-button" onClick={onCompute}>Tính lại từ Policy</button>}<button className="secondary-button" disabled title="Tính năng xuất báo cáo sẽ được bổ sung">Xuất báo cáo <Icon name="arrow"/></button></div></div><div className="simple-table payroll-table"><div className="table-head"><span>THÀNH VIÊN</span><span>LƯƠNG CƠ BẢN</span><span>PHỤ CẤP</span><span>THƯỞNG / PHẠT</span><span>KPI</span><span>TỔNG NHẬN</span></div>{rows.map(r=>{const u=data.users?.find(x=>x.email===r.email);return <div className="table-row" key={r.email}><span className="title-cell"><Avatar user={u}/><b>{u?.name||r.email}</b></span><span>{money(r.base)}</span><span>{money(r.fees)}</span><span>{money(Number(r.bonus||0)-Number(r.penalty||0))}</span><span><span className="kpi-mini"><i style={{width:(r.kpi_rate||0)+'%'}}/></span>{Math.round(r.kpi_rate||0)}%</span><b>{money(r.total)}</b></div>})}</div></section>{canManage&&<PayrollPolicyPanel users={data.users||[]}/>}</div>
 }
 
 function PayrollPolicyPanel({users}) {

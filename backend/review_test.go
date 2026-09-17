@@ -60,6 +60,14 @@ func TestContentReviewFlowAndTaskDetailMutations(t *testing.T) {
 		t.Fatalf("foreign plan edit: %d", foreign.Code)
 	}
 
+	start := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/t1", bytes.NewBufferString(`{"status":"doing"}`))
+	req.SetPathValue("id", "t1")
+	a.updateTask(start, req, user{Email: "staff@example.com"})
+	if start.Code != http.StatusOK {
+		t.Fatalf("task start: %d %s", start.Code, start.Body.String())
+	}
+
 	update := httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/t1", bytes.NewBufferString(`{"title":"New title","due_date":"2026-09-20","priority":"Cao"}`))
 	req.SetPathValue("id", "t1")
