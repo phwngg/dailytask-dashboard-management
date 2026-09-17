@@ -15,9 +15,30 @@ type overviewMetrics struct {
 	CompletedWeek int `json:"completedWeek"`
 }
 
+type overviewProgressPoint struct {
+	Date      string `json:"date"`
+	Rate      *int   `json:"rate"`
+	Completed int    `json:"completed"`
+	Total     int    `json:"total"`
+}
+
+type overviewProgressWeek struct {
+	WeekStart string                  `json:"weekStart"`
+	WeekEnd   string                  `json:"weekEnd"`
+	Total     int                     `json:"total"`
+	Completed int                     `json:"completed"`
+	Points    []overviewProgressPoint `json:"points"`
+}
+
+type overviewProgressTrend struct {
+	Previous overviewProgressWeek `json:"previous"`
+	Current  overviewProgressWeek `json:"current"`
+}
+
 type overviewProgress struct {
-	Total     int `json:"total"`
-	Completed int `json:"completed"`
+	Total     int                   `json:"total"`
+	Completed int                   `json:"completed"`
+	Trend     overviewProgressTrend `json:"trend"`
 }
 
 type overviewSummary struct {
@@ -69,8 +90,6 @@ func (a *api) overview(w http.ResponseWriter, r *http.Request, me user) {
 		{&out.Metrics.Overdue, "SELECT count(*) FROM tasks" + whereOpen + " AND due_date<>'' AND due_date<?", append(append([]any{}, argsOpen...), today)},
 		{&out.Metrics.Today, "SELECT count(*) FROM tasks" + whereOpen + " AND due_date=?", append(append([]any{}, argsOpen...), today)},
 		{&out.Metrics.CompletedWeek, "SELECT count(*) FROM tasks" + where + " AND status='done' AND date(done_at,'+7 hours') BETWEEN ? AND ?", append(append([]any{}, args...), out.Monday, out.Sunday)},
-		{&out.Progress.Total, "SELECT count(*) FROM tasks" + where + " AND due_date BETWEEN ? AND ?", append(append([]any{}, args...), out.Monday, out.Sunday)},
-		{&out.Progress.Completed, "SELECT count(*) FROM tasks" + where + " AND status='done' AND due_date BETWEEN ? AND ?", append(append([]any{}, args...), out.Monday, out.Sunday)},
 	}
 	for _, item := range queries {
 		if err := a.db.QueryRowContext(r.Context(), item.query, item.args...).Scan(item.target); err != nil {
@@ -78,6 +97,13 @@ func (a *api) overview(w http.ResponseWriter, r *http.Request, me user) {
 			return
 		}
 	}
+	out.Progress.Trend, err = a.overviewProgressTrend(r.Context(), assignee, monday, today)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	out.Progress.Total = out.Progress.Trend.Current.Total
+	out.Progress.Completed = out.Progress.Trend.Current.Completed
 	if me.IsAdmin || hasCap(me.Caps, "plan.view") {
 		planWhere, planArgs := overviewAssignee(assignee)
 		if err := a.db.QueryRowContext(r.Context(), "SELECT count(*) FROM content_plan"+planWhere+" AND status<>? AND post_date BETWEEN ? AND ?", append(append(append([]any{}, planArgs...), "Đã đăng"), today, through)...).Scan(&out.Metrics.Content7Days); err != nil {
@@ -106,6 +132,72 @@ func (a *api) overview(w http.ResponseWriter, r *http.Request, me user) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+type overviewTrendTask struct {
+	DueDate       string
+	Status        string
+	CompletedDate string
+}
+
+func (a *api) overviewProgressTrend(ctx context.Context, assignee string, monday time.Time, today string) (overviewProgressTrend, error) {
+	previousMonday := monday.AddDate(0, 0, -7)
+	weekEnd := monday.AddDate(0, 0, 6)
+	where, args := overviewAssignee(assignee)
+	args = append(args, previousMonday.Format("2006-01-02"), weekEnd.Format("2006-01-02"))
+	rows, err := a.db.QueryContext(ctx, "SELECT due_date,status,coalesce(date(done_at,'+7 hours'),'') FROM tasks"+where+" AND due_date BETWEEN ? AND ?", args...)
+	if err != nil {
+		return overviewProgressTrend{}, err
+	}
+	defer rows.Close()
+	tasks := []overviewTrendTask{}
+	for rows.Next() {
+		var item overviewTrendTask
+		if err := rows.Scan(&item.DueDate, &item.Status, &item.CompletedDate); err != nil {
+			return overviewProgressTrend{}, err
+		}
+		tasks = append(tasks, item)
+	}
+	if err := rows.Err(); err != nil {
+		return overviewProgressTrend{}, err
+	}
+	return overviewProgressTrend{
+		Previous: buildOverviewProgressWeek(previousMonday, tasks, false, today),
+		Current:  buildOverviewProgressWeek(monday, tasks, true, today),
+	}, nil
+}
+
+func buildOverviewProgressWeek(start time.Time, tasks []overviewTrendTask, current bool, today string) overviewProgressWeek {
+	end := start.AddDate(0, 0, 6)
+	startKey, endKey := start.Format("2006-01-02"), end.Format("2006-01-02")
+	weekTasks := make([]overviewTrendTask, 0)
+	for _, task := range tasks {
+		if task.DueDate >= startKey && task.DueDate <= endKey {
+			weekTasks = append(weekTasks, task)
+		}
+	}
+	week := overviewProgressWeek{WeekStart: startKey, WeekEnd: endKey, Total: len(weekTasks), Points: make([]overviewProgressPoint, 0, 7)}
+	for day := 0; day < 7; day++ {
+		date := start.AddDate(0, 0, day).Format("2006-01-02")
+		completed := 0
+		for _, task := range weekTasks {
+			if task.Status == "done" && task.CompletedDate != "" && task.CompletedDate <= date {
+				completed++
+			}
+		}
+		point := overviewProgressPoint{Date: date, Completed: completed, Total: week.Total}
+		if week.Total > 0 && (!current || date <= today) {
+			rate := int((completed*100 + week.Total/2) / week.Total)
+			point.Rate = &rate
+		}
+		week.Points = append(week.Points, point)
+	}
+	for _, task := range weekTasks {
+		if task.Status == "done" && task.CompletedDate != "" && (!current || task.CompletedDate <= today) {
+			week.Completed++
+		}
+	}
+	return week
 }
 
 func overviewAssignee(assignee string) (string, []any) {

@@ -114,3 +114,60 @@ func TestOverviewAggregateEndpointUsesScopedCounts(t *testing.T) {
 		t.Fatalf("staff summary: %+v", summary)
 	}
 }
+
+func TestOverviewProgressTrend(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "app.db"), "owner@example.com", "test-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	loc, _ := time.LoadLocation("Asia/Ho_Chi_Minh")
+	now := time.Now().In(loc)
+	monday := now.AddDate(0, 0, -((int(now.Weekday()) + 6) % 7))
+	previousMonday := monday.AddDate(0, 0, -7)
+	date := func(start time.Time, days int) string { return start.AddDate(0, 0, days).Format("2006-01-02") }
+	stamp := func(day string) string { return day + "T03:00:00Z" }
+	_, err = db.Exec(`INSERT INTO tasks(id,title,assignee,due_date,status,done_at) VALUES
+		('previous-done','Previous done','owner@example.com',?,'done',?),
+		('previous-open','Previous open','owner@example.com',?,'todo',''),
+		('current-done','Current done','owner@example.com',?,'done',?),
+		('current-open','Current open','owner@example.com',?,'todo','')`,
+		date(previousMonday, 0), stamp(date(previousMonday, 1)),
+		date(previousMonday, 0),
+		date(monday, 0), stamp(date(monday, 0)),
+		date(monday, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := &api{db: db}
+	w := httptest.NewRecorder()
+	a.overview(w, httptest.NewRequest(http.MethodGet, "/api/overview", nil), user{Email: "owner@example.com", IsAdmin: true, IsLeader: true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("overview: %d %s", w.Code, w.Body.String())
+	}
+	var summary overviewSummary
+	if err = json.Unmarshal(w.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	previous, current := summary.Progress.Trend.Previous, summary.Progress.Trend.Current
+	if previous.Total != 2 || previous.Completed != 1 || current.Total != 2 || current.Completed != 1 {
+		t.Fatalf("trend totals: previous=%+v current=%+v", previous, current)
+	}
+	if len(previous.Points) != 7 || len(current.Points) != 7 {
+		t.Fatalf("trend points: previous=%d current=%d", len(previous.Points), len(current.Points))
+	}
+	if previous.Points[0].Rate == nil || *previous.Points[0].Rate != 0 || previous.Points[1].Rate == nil || *previous.Points[1].Rate != 50 {
+		t.Fatalf("previous rates: %+v", previous.Points)
+	}
+	if current.Points[0].Rate == nil || *current.Points[0].Rate != 50 {
+		t.Fatalf("current rates: %+v", current.Points)
+	}
+	elapsed := (int(now.Weekday()) + 6) % 7
+	for i, point := range current.Points {
+		if i > elapsed && point.Rate != nil {
+			t.Fatalf("future current point %d should be null: %+v", i, point)
+		}
+	}
+}
