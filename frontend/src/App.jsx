@@ -1100,7 +1100,6 @@ function AdminPage({data,users,loading,onRefresh,onSave,onUpdate}) {
 
   return <div className="admin-page">
     <PageHeading eyebrow="WORKSPACE SETTINGS" title="Quản trị thành viên" description="Thêm người vào workspace, phân vai trò và kiểm soát quyền truy cập." action={<button className="primary-button" onClick={() => setEditor({mode:'create'})}><Icon name="plus"/> Thêm thành viên</button>}/>
-    <div className="summary-strip admin-summary"><span><b>{counts.all}</b> thành viên</span><span className="summary-sep"/><span><b>{counts.active}</b> đang hoạt động</span><span className="summary-sep"/><span><b>{counts.inactive}</b> đã khóa</span><span className="admin-summary-note">Khóa tài khoản không xóa dữ liệu công việc.</span></div>
     <section className="admin-role-guide panel" id="admin-role-guide" hidden={!showRoles}>
       <div><span className="eyebrow">QUYỀN DỄ HIỂU</span><h2>Chọn vai trò theo việc người đó cần làm</h2><p><b>Vị trí</b> mô tả chuyên môn như Content, Media hoặc Ads; <b>Vai trò</b> mới quyết định quyền truy cập.</p></div>
       <div className="admin-role-cards">
