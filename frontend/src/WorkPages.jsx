@@ -58,7 +58,6 @@ function TaskDetails({task,data,onStatus,onEdit,onDelete,onClose}) {
 function ProgressTrend({progress, fallbackTotal = 0, fallbackCompleted = 0}) {
   const [hoveredPoint, setHoveredPoint] = useState(null)
   const [selectedIndex, setSelectedIndex] = useState(null)
-  const chartWrapRef = useRef(null)
   const trend = progress?.trend
   const points = trend?.points?.length ? trend.points : [trend?.previous, trend?.current].filter(Boolean)
   const current = points.at(-1)
@@ -96,11 +95,9 @@ function ProgressTrend({progress, fallbackTotal = 0, fallbackCompleted = 0}) {
   const rangeLabel = {'2w':'2 tuần','4w':'4 tuần','8w':'8 tuần','3m':'3 tháng'}[trend?.range] || '4 tuần'
   const activatePoint = index => setSelectedIndex(value => value === index ? null : index)
   const updateHoveredPoint = (event, index) => {
-    const rect = chartWrapRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const x = event.clientX - rect.left
-    const y = event.clientY - rect.top
-    const side = x > rect.width - 176 ? 'left' : 'right'
+    const x = event.clientX
+    const y = event.clientY
+    const side = x > window.innerWidth - 176 ? 'left' : 'right'
     const vertical = y < 112 ? 'below' : 'above'
     setHoveredPoint({index, x, y, side, vertical})
   }
@@ -113,7 +110,7 @@ function ProgressTrend({progress, fallbackTotal = 0, fallbackCompleted = 0}) {
         {barSeries.map(([key, label, color]) => <span key={key}><i className="progress-legend-mark bar" style={{backgroundColor:color}}/>{label}</span>)}
       </div>
     </div>
-    <div className="progress-chart-wrap" ref={chartWrapRef}>
+    <div className="progress-chart-wrap">
       <svg className="progress-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Biểu đồ kết hợp nội dung cần đăng theo đường và công việc đến hạn, hoàn thành, quá hạn theo cột">
         <g className="progress-chart-grid">{gridValues.map(value => <g key={value}><line x1={left} x2={width - right} y1={y(value)} y2={y(value)}/><text x={left - 8} y={y(value) + 3}>{value}</text></g>)}</g>
         <g className="progress-chart-bars">{points.map((point, index) => <g key={pointKey(point)}>{barSeries.map(([key, label, color], barIndex) => { const value = Number(point[key] || 0); const barHeight = value ? Math.max(2, chartBottom - y(value)) : 0; return <rect key={key} x={barStart(index) + barIndex * (barWidth + barGap)} y={chartBottom - barHeight} width={barWidth} height={barHeight} rx="2" style={{fill:color}}><title>{label}: {value} · {point.date} → {point.endDate}</title></rect> })}</g>)}</g>
