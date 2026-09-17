@@ -260,6 +260,14 @@ func planFilter(r *http.Request) ([]string, []any, error) {
 		clauses = append(clauses, "status<>?")
 		args = append(args, "Đã đăng")
 	}
+	if r.URL.Query().Get("overdue") == "1" {
+		loc, err := time.LoadLocation("Asia/Ho_Chi_Minh")
+		if err != nil {
+			return nil, nil, err
+		}
+		clauses = append(clauses, "status<>? AND post_date<>? AND post_date<?")
+		args = append(args, "Đã đăng", "", time.Now().In(loc).Format("2006-01-02"))
+	}
 	from, to := r.URL.Query().Get("from"), r.URL.Query().Get("to")
 	for _, item := range []struct{ value, clause string }{{from, "post_date>=?"}, {to, "post_date<=?"}} {
 		if item.value != "" {

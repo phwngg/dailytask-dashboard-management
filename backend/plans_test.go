@@ -68,6 +68,15 @@ func TestPlanPaginationFiltersAndStats(t *testing.T) {
 		t.Fatalf("unexpected next page: %+v", page)
 	}
 
+	overdue := httptest.NewRecorder()
+	a.listPlans(overdue, httptest.NewRequest(http.MethodGet, "/api/plans?channel=Channel%20A&overdue=1", nil), user{IsAdmin: true})
+	if err := json.Unmarshal(overdue.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if overdue.Code != http.StatusOK || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != "P3" {
+		t.Fatalf("overdue filter: status %d, page %+v", overdue.Code, page)
+	}
+
 	params = url.Values{"q": {"Quay"}, "channel": {"Channel B"}, "from": {"2026-09-12"}, "to": {"2026-09-12"}, "assignee": {"an@example.com"}, "status": {"Đang thực hiện"}}
 	filtered := httptest.NewRecorder()
 	a.listPlans(filtered, httptest.NewRequest(http.MethodGet, "/api/plans?"+params.Encode(), nil), user{IsAdmin: true})
