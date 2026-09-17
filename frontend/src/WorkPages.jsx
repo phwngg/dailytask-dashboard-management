@@ -56,6 +56,8 @@ function TaskDetails({task,data,onStatus,onEdit,onDelete,onClose}) {
 }
 
 function ProgressTrend({progress, fallbackTotal = 0, fallbackCompleted = 0}) {
+  const [hoveredIndex, setHoveredIndex] = useState(null)
+  const [selectedIndex, setSelectedIndex] = useState(null)
   const trend = progress?.trend
   const points = trend?.points?.length ? trend.points : [trend?.previous, trend?.current].filter(Boolean)
   const current = points.at(-1)
@@ -71,33 +73,51 @@ function ProgressTrend({progress, fallbackTotal = 0, fallbackCompleted = 0}) {
   const maxValue = Math.max(1, ...values)
   const gridValues = [0, Math.ceil(maxValue / 2), maxValue].filter((value, index, list) => index === 0 || value !== list[index - 1])
   const y = value => top + (maxValue - value) * chartHeight / maxValue
-  const series = [
+  const barSeries = [
     ['due', 'Đến hạn', '#d99543'],
-    ['content', 'Cần đăng', '#8068df'],
     ['completed', 'Hoàn thành', '#3aa77b'],
     ['overdue', 'Quá hạn', '#df7469'],
   ]
-  const path = (key, color) => <polyline className="progress-chart-line metric" style={{stroke:color}} points={points.map((point, index) => `${x(index)},${y(Number(point[key] || 0))}`).join(' ')}/>
+  const contentColor = '#8068df'
+  const chartBottom = y(0)
+  const groupWidth = Math.min(48, chartWidth / Math.max(points.length, 1) * .78)
+  const barGap = 2
+  const barWidth = Math.max(3, Math.min(9, (groupWidth - barGap * 2) / 3))
+  const groupBarsWidth = barWidth * 3 + barGap * 2
+  const barStart = index => x(index) - groupBarsWidth / 2
+  const linePath = points.map((point, index) => `${x(index)},${y(Number(point.content || 0))}`).join(' ')
   const dateLabel = value => value ? value.slice(5).replace('-', '/') : ''
+  const activeIndex = hoveredIndex ?? selectedIndex ?? points.length - 1
+  const active = points[activeIndex] || current
   const delta = previous ? Number(current.completed || 0) - Number(previous.completed || 0) : null
   const deltaLabel = delta == null ? 'Chưa đủ dữ liệu so sánh' : `${delta > 0 ? '+' : ''}${delta} hoàn thành so với tuần trước`
   const rangeLabel = {'2w':'2 tuần','4w':'4 tuần','8w':'8 tuần','3m':'3 tháng'}[trend?.range] || '4 tuần'
+  const activatePoint = index => setSelectedIndex(value => value === index ? null : index)
+  const pointKey = point => `${point.date}-${point.endDate}`
   return <div className="progress-trend">
     <div className="progress-trend-summary">
       <div><span className="progress-trend-kicker">HOÀN THÀNH TRONG TUẦN GẦN NHẤT</span><strong>{current.completed || 0}</strong><small className={delta == null ? '' : delta >= 0 ? 'positive' : 'negative'}>{deltaLabel}</small></div>
-      <div className="progress-trend-legend">{series.map(([key, label, color]) => <span key={key}><i className="progress-legend-line" style={{borderColor:color}}/>{label}</span>)}</div>
+      <div className="progress-trend-legend">
+        <span><i className="progress-legend-mark line" style={{backgroundColor:contentColor}}/>Cần đăng</span>
+        {barSeries.map(([key, label, color]) => <span key={key}><i className="progress-legend-mark bar" style={{backgroundColor:color}}/>{label}</span>)}
+      </div>
     </div>
     <div className="progress-chart-wrap">
-      <svg className="progress-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="So sánh công việc đến hạn, nội dung cần đăng, công việc hoàn thành và công việc quá hạn theo tuần">
+      <svg className="progress-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Biểu đồ kết hợp nội dung cần đăng theo đường và công việc đến hạn, hoàn thành, quá hạn theo cột">
         <g className="progress-chart-grid">{gridValues.map(value => <g key={value}><line x1={left} x2={width - right} y1={y(value)} y2={y(value)}/><text x={left - 8} y={y(value) + 3}>{value}</text></g>)}</g>
-        {series.map(([key, , color]) => <g key={key}>{path(key, color)}{points.map((point, index) => <circle className="progress-chart-point metric" style={{stroke:color}} key={`${key}-${point.date}`} cx={x(index)} cy={y(Number(point[key] || 0))} r="4"/>)}</g>)}
-        <g className="progress-chart-days">{points.map(point => <text key={point.date} x={x(points.indexOf(point))} y={height - 10}>{dateLabel(point.date)}</text>)}</g>
+        <g className="progress-chart-bars">{points.map((point, index) => <g key={pointKey(point)}>{barSeries.map(([key, label, color], barIndex) => { const value = Number(point[key] || 0); const barHeight = value ? Math.max(2, chartBottom - y(value)) : 0; return <rect key={key} x={barStart(index) + barIndex * (barWidth + barGap)} y={chartBottom - barHeight} width={barWidth} height={barHeight} rx="2" style={{fill:color}}><title>{label}: {value} · {point.date} → {point.endDate}</title></rect> })}</g>)}</g>
+        <polyline className="progress-chart-line content" style={{stroke:contentColor}} points={linePath}/>
+        {points.map((point, index) => <circle className="progress-chart-point content" style={{stroke:contentColor}} key={pointKey(point)} cx={x(index)} cy={y(Number(point.content || 0))} r={activeIndex === index ? 5 : 4} tabIndex="0" role="button" aria-label={`Cần đăng ${point.content || 0} trong tuần ${point.date}`} onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(null)} onFocus={() => setHoveredIndex(index)} onBlur={() => setHoveredIndex(null)} onClick={() => activatePoint(index)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); activatePoint(index) } }}><title>Cần đăng: {point.content || 0} · {point.date} → {point.endDate}</title></circle>)}
+        <g className="progress-chart-days">{points.map((point, index) => <text key={pointKey(point)} x={x(index)} y={height - 10}>{dateLabel(point.date)}</text>)}</g>
       </svg>
+    </div>
+    <div className="progress-chart-detail" aria-live="polite">
+      <div className="progress-chart-detail-heading"><b>{active.date} → {active.endDate}</b><small>{hoveredIndex != null ? 'Đang xem điểm dữ liệu' : selectedIndex != null ? 'Đã chọn điểm dữ liệu' : 'Tuần gần nhất'}</small></div>
+      <div className="progress-chart-detail-values"><span><i className="progress-legend-mark line" style={{backgroundColor:contentColor}}/>Cần đăng <b>{active.content || 0}</b></span>{barSeries.map(([key, label, color]) => <span key={key}><i className="progress-legend-mark bar" style={{backgroundColor:color}}/>{label} <b>{active[key] || 0}</b></span>)}</div>
     </div>
     <div className="progress-trend-foot"><span>{current.date} → {current.endDate}</span><span>{rangeLabel} · {current.due || 0} đến hạn · {current.content || 0} cần đăng · {current.overdue || 0} quá hạn</span></div>
   </div>
 }
-
 export function WorkOverview({data,overview,go,onAdd,params,onStatus}) {
   const dates=dateWindow(),scope=params.get('assignee')||''
   const tasks=overview?.tasks||(data.tasks||[]).filter(t=>!scope||t.assignee===scope)
