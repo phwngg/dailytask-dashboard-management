@@ -99,7 +99,10 @@ function ProgressTrend({progress, fallbackTotal = 0, fallbackCompleted = 0}) {
     const rect = chartWrapRef.current?.getBoundingClientRect()
     if (!rect) return
     const x = event.clientX - rect.left
-    setHoveredPoint({index, x, y: event.clientY - rect.top, side: x > rect.width * .64 ? 'left' : 'right'})
+    const y = event.clientY - rect.top
+    const side = x > rect.width - 176 ? 'left' : 'right'
+    const vertical = y < 112 ? 'below' : 'above'
+    setHoveredPoint({index, x, y, side, vertical})
   }
   const pointKey = point => `${point.date}-${point.endDate}`
   return <div className="progress-trend">
@@ -118,7 +121,7 @@ function ProgressTrend({progress, fallbackTotal = 0, fallbackCompleted = 0}) {
         {points.map((point, index) => <circle className="progress-chart-point content" style={{stroke:contentColor}} key={pointKey(point)} cx={x(index)} cy={y(Number(point.content || 0))} r={activeIndex === index ? 5 : 4} tabIndex="0" role="button" aria-label={`Cần đăng ${point.content || 0} trong tuần ${point.date}`} onMouseEnter={event => updateHoveredPoint(event, index)} onMouseMove={event => updateHoveredPoint(event, index)} onMouseLeave={() => setHoveredPoint(null)} onFocus={() => setHoveredPoint({index})} onBlur={() => setHoveredPoint(null)} onClick={() => activatePoint(index)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); activatePoint(index) } }}><title>Cần đăng: {point.content || 0} · {point.date} → {point.endDate}</title></circle>)}
         <g className="progress-chart-days">{points.map((point, index) => <text key={pointKey(point)} x={x(index)} y={height - 10}>{dateLabel(point.date)}</text>)}</g>
       </svg>
-      {hoveredPoint?.x != null && <div className={`progress-point-tooltip ${hoveredPoint.side}`} style={{left:`${hoveredPoint.x}px`,top:`${Math.max(108, hoveredPoint.y)}px`}}>
+      {hoveredPoint?.x != null && <div className={`progress-point-tooltip ${hoveredPoint.side} ${hoveredPoint.vertical}`} style={{left:`${hoveredPoint.x}px`,top:`${Math.max(8, hoveredPoint.y)}px`}}>
         <b>{active.date} → {active.endDate}</b>
         <span><i className="progress-legend-mark line" style={{backgroundColor:contentColor}}/>Cần đăng <strong>{active.content || 0}</strong></span>
         {barSeries.map(([key, label, color]) => <span key={key}><i className="progress-legend-mark bar" style={{backgroundColor:color}}/>{label} <strong>{active[key] || 0}</strong></span>)}
