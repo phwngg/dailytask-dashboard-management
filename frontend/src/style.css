@@ -235,3 +235,4 @@ input,select,textarea{accent-color:var(--brand)}
 @media(max-width:760px){.calendar-month-heading .calendar-add-button{margin-left:auto}.calendar-month-heading .calendar-navigation{margin-left:0}}
 .calendar-panel{padding-bottom:8px}.calendar-month{padding-bottom:0}.calendar-content{margin-bottom:0}
 .calendar-panel,.calendar-content,.calendar-month,.calendar-days{height:max-content!important;min-height:0!important}.calendar-panel{align-self:flex-start}.calendar-content,.calendar-month{flex:none!important}
+@media(min-width:1101px){.app-shell{height:calc(100vh / 1.32);min-height:0}.main-area{height:calc(100vh / 1.32);min-height:0;overflow-y:auto;overflow-x:hidden}}
