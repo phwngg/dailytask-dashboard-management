@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { pancakeTopPosts } from './pancakeTopPosts.js'
 import { filterAdminUsers } from './adminFilters.js'
-import { payrollBreakdown } from './payrollPolicyDetails.js'
+import { payrollPolicyGroups } from './payrollPolicyGroups.js'
 
 const nav = [
   ['overview', 'Tổng quan', '◫'],
