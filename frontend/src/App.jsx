@@ -255,6 +255,17 @@ function App() {
     } catch (e) { setError(e.message) }
   }
 
+  const createCalendarEntry = async form => {
+    const meeting = form.kind === 'meeting'
+    const payload = meeting
+      ? { title:form.title, date:form.date, time:form.time, attendees:form.attendees, duration:Number(form.duration)||60, note:form.note }
+      : { kind:form.kind, title:form.title, date:form.date, time:form.time, location:form.location, lead:form.attendees[0], attendees:form.attendees, qty:1, brief:form.note }
+    try {
+      await request(meeting?'/meetings':'/schedules', { method:'POST', body:JSON.stringify(payload) })
+      await load()
+    } catch (e) { setError(e.message); throw e }
+  }
+
   const savePayrollBreakdown = async (row, items) => {
     try {
       await request('/payroll/breakdown', { method:'PUT', body:JSON.stringify({ month:data.payrollMonth, email:row.email, items }) })
@@ -455,12 +466,12 @@ function App() {
           </div>
         </header>
         {error && <button className="notice-bar" onClick={()=>setError('')}>{error}<span>×</span></button>}
-        <div className="page-content">
+        <div className={`page-content${page==='calendar'?' calendar-page-content':''}`}>
           {page === 'overview' && <WorkOverview data={data} overview={overviewSummary} go={navigate} params={new URLSearchParams(routeSearch)} onAdd={()=>setModal('task')} onStatus={updateTask}/>}
           {page === 'plan' && <PlanPage routeSearch={routeSearch} go={navigate} data={data} onAdd={()=>setModal('plan')} onEdit={plan=>setPlanEditor(plan)} onDelete={deletePlan} onReview={reviewPlan} demoMode={demoMode} refreshKey={planRevision}/>}
           {page === 'tasks' && <WorkTasks data={data} go={navigate} params={new URLSearchParams(routeSearch)} onAdd={()=>setModal('task')} onStatus={updateTask} onEdit={task=>setTaskEditor(task)} onDelete={deleteTask}/>}
           {page === 'shifts' && <ShiftPage data={data}/> }
-          {page === 'calendar' && <WorkCalendar data={data} go={navigate} params={new URLSearchParams(routeSearch)}/>}
+          {page === 'calendar' && <WorkCalendar data={data} go={navigate} params={new URLSearchParams(routeSearch)} onCreate={createCalendarEntry} demo={demoMode}/>}
           {page === 'payroll' && <PayrollPage data={data} onCompute={computePayroll} onSaveBreakdown={savePayrollBreakdown} demo={demoMode}/>}
           {page === 'channels' && <ChannelPage data={data} demo={demoMode} onConnect={connectPancake} onSync={syncPancake} onLoadMetrics={loadPancakeMetrics} onMap={mapPancakeChannel} onUnmap={unmapPancakeChannel}/>}
           {page === 'admin' && <AdminPage data={data} users={adminUsers || data.users || []} loading={adminLoading} onRefresh={refreshAdminUsers} onSave={saveAdminUser} onUpdate={updateAdminUser}/>}
