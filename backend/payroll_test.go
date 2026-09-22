@@ -105,3 +105,29 @@ func TestPayrollPolicyAPIAllowsManagerToSaveFormula(t *testing.T) {
 		t.Fatalf("update returned %d: %s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestUpdatePayrollBreakdownRecalculatesTotal(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "app.db"), "admin@example.com", "password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO payroll(month,email,base,fees,bonus,penalty,total) VALUES('2026-08','admin@example.com',0,0,0,0,0)`); err != nil {
+		t.Fatal(err)
+	}
+	app := &api{db: db}
+	body := `{"month":"2026-08","email":"admin@example.com","items":[{"code":"base","label":"Lương cơ bản","group":"base","amount":1000},{"code":"extra","label":"Phụ cấp","group":"fees","amount":200},{"code":"fine","label":"Phạt","group":"penalty","amount":-50}]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/payroll/breakdown", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	app.updatePayrollBreakdown(rr, req, user{IsAdmin: true})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update returned %d: %s", rr.Code, rr.Body.String())
+	}
+	var total int64
+	if err := db.QueryRow(`SELECT total FROM payroll WHERE month='2026-08' AND email='admin@example.com'`).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if total != 1150 {
+		t.Fatalf("total=%d want 1150", total)
+	}
+}

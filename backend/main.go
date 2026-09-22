@@ -53,6 +53,7 @@ func main() {
 	mux.HandleFunc("PUT /api/admin/channels", app.protected(app.mapPancakeChannel))
 	mux.HandleFunc("DELETE /api/admin/pancake/pages/{page_id}/assignment", app.protected(app.unmapPancakeChannel))
 	mux.HandleFunc("GET /api/payroll", app.protected(app.payroll))
+	mux.HandleFunc("PUT /api/payroll/breakdown", app.protected(app.updatePayrollBreakdown))
 	mux.HandleFunc("GET /api/payroll/policies", app.protected(app.payrollPolicies))
 	mux.HandleFunc("POST /api/payroll/policies", app.protected(app.createPayrollPolicy))
 	mux.HandleFunc("PUT /api/payroll/policies/{id}", app.protected(app.updatePayrollPolicy))

@@ -630,3 +630,54 @@ func (a *api) updatePayrollPolicy(w http.ResponseWriter, r *http.Request, me use
 	}
 	a.savePayrollPolicy(w, r, me, id)
 }
+
+func (a *api) updatePayrollBreakdown(w http.ResponseWriter, r *http.Request, me user) {
+	if !require(w, me, "payroll.compute") {
+		return
+	}
+	var req struct {
+		Month string          `json:"month"`
+		Email string          `json:"email"`
+		Items []breakdownItem `json:"items"`
+	}
+	if decode(r, &req) != nil || len(req.Month) != 7 || req.Month[4] != '-' || len(req.Email) == 0 || len(req.Email) > 254 || strings.ContainsAny(req.Email, " \t\r\n") || req.Items == nil || len(req.Items) > 100 {
+		writeError(w, http.StatusBadRequest, "Chi tiết lương không hợp lệ")
+		return
+	}
+	if _, err := time.Parse("2006-01", req.Month); err != nil {
+		writeError(w, http.StatusBadRequest, "Tháng không hợp lệ")
+		return
+	}
+	var base, fees, bonus, penalty int64
+	for _, item := range req.Items {
+		if item.Code == "" || len(item.Code) > 100 || item.Label == "" || len(item.Label) > 200 || len(item.How) > 500 || item.Amount < -1_000_000_000_000 || item.Amount > 1_000_000_000_000 || (item.Group != "base" && item.Group != "fees" && item.Group != "bonus" && item.Group != "penalty") || (item.Group == "penalty" && item.Amount > 0) || (item.Group != "penalty" && item.Amount < 0) {
+			writeError(w, http.StatusBadRequest, "Dòng chi tiết lương không hợp lệ")
+			return
+		}
+		switch item.Group {
+		case "base":
+			base += item.Amount
+		case "fees":
+			fees += item.Amount
+		case "bonus":
+			bonus += item.Amount
+		case "penalty":
+			penalty += item.Amount
+		}
+	}
+	breakdown, err := json.Marshal(req.Items)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Chi tiết lương không hợp lệ")
+		return
+	}
+	result, err := a.db.ExecContext(r.Context(), `UPDATE payroll SET base=?,fees=?,bonus=?,penalty=?,total=?,breakdown=? WHERE month=? AND lower(email)=lower(?)`, base, fees, bonus, penalty, base+fees+bonus+penalty, string(breakdown), req.Month, req.Email)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		writeError(w, http.StatusNotFound, "Không tìm thấy bảng lương")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"total": base + fees + bonus + penalty})
+}
