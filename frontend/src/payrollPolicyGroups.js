@@ -1,14 +1,15 @@
 export function payrollPolicyGroups(policies, payrollRows) {
-  const snapshots = new Map(payrollRows.map(row => [row.email.toLowerCase(), row]))
+  const snapshots = new Map((Array.isArray(payrollRows) ? payrollRows : []).map(row => [row.email.toLowerCase(), row]))
   const groups = new Map()
 
-  for (const policy of policies) {
+  for (const policy of Array.isArray(policies) ? policies : []) {
     const email = policy.email.toLowerCase()
     if (!groups.has(email)) {
       const snapshot = snapshots.get(email)
       let breakdown = []
       try {
-        breakdown = JSON.parse(snapshot?.breakdown || '[]')
+        const parsed = JSON.parse(snapshot?.breakdown || '[]')
+        breakdown = Array.isArray(parsed) ? parsed : []
       } catch {}
       groups.set(email, {
         email: policy.email,

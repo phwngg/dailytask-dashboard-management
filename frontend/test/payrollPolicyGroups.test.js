@@ -14,3 +14,14 @@ test('groups policies by employee and uses calculated payroll breakdown', () => 
   assert.equal(groups[0].breakdown.get('fee').amount, 2000000)
   assert.equal(groups[0].breakdown.has('base'), false)
 })
+
+test('treats null payroll collections and breakdown as empty', () => {
+  const groups = payrollPolicyGroups([
+    { email: 'an@example.com', user_name: 'Ngọc An', code: 'fee', label: 'Phí' },
+  ], [{ email: 'an@example.com', total: 0, breakdown: 'null' }])
+
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].total, 0)
+  assert.equal(groups[0].breakdown.size, 0)
+  assert.deepEqual(payrollPolicyGroups(null, null), [])
+})
